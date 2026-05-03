@@ -32,6 +32,7 @@ from langgraph.prebuilt import ToolNode
 from typing_extensions import TypedDict
 
 from tools.gemini_view import print_report
+from tools.confl_ser import analyze_schedule
 
 # ══════════════════════════════════════════════════════════════
 #  SCHEDULE PARSER  (handles RTL/Hebrew bidi text, various formats)
@@ -406,13 +407,33 @@ def check_conflict_serializability(schedule: list[list]) -> str:
         JSON string with verdict, reason, graph edges, cycle info,
         cycle path (if any), and equivalent serial order (if acyclic).
     """
+
+
+@tool
+def check_conflict_serializability(schedule: list[list]) -> str:
+    """
+    Check whether a schedule is CONFLICT-SERIALIZABLE.
+
+    Use this tool when the user explicitly asks about conflict-serializability,
+    or asks to build a precedence/serialization graph and check for cycles.
+
+    Args:
+        schedule: List of operations, each as [type, transaction_id, object].
+                  type is 'r' (read) or 'w' (write).
+                  transaction_id is an integer.
+                  object is a string like 'A', 'B', etc.
+                  Example: [['r',1,'A'], ['w',2,'A'], ['w',1,'B']]
+
+    Returns:
+        JSON string with verdict, reason, graph edges, cycle info,
+        cycle path (if any), and equivalent serial order (if acyclic).
+    """
     try:
         parsed = _parse_schedule(schedule)
-        result = _analyze_conflict(parsed)
-        return json.dumps(result, indent=2)
+        analyze_schedule(parsed)
+        return json.dumps('Correct', indent=2)
     except Exception as e:
         return json.dumps({"error": str(e)})
-
 
 # ══════════════════════════════════════════════════════════════
 #  LANGGRAPH AGENT

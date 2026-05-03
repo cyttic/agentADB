@@ -110,5 +110,3 @@ schedule =  [
     ('r', 3, 'A'),
     ('r', 4, 'A')
 ]
-
-analyze_schedule(schedule)
