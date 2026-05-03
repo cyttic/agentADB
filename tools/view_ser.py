@@ -229,16 +229,20 @@ def analyze(schedule):
 
 # -------------------------
 # EXAMPLE
-#from lesson
+
+
+#2.b
 schedule =  [
-    ('r', 2, 'B'),
+    ('w', 1, 'A'),
     ('w', 2, 'A'),
-    ('r', 1, 'A'),
+    ('w', 3, 'B'),
+    ('w', 4, 'B'),
+    ('r', 1, 'B'),
+    ('r', 2, 'B'),
     ('r', 3, 'A'),
-    ('w', 1, 'B'),
-    ('w', 2, 'B'),
-    ('w', 3, 'B')
+    ('r', 4, 'A')
 ]
+
 
 #2.a
 schedule =  [
@@ -257,18 +261,16 @@ schedule =  [
     ('w', 3, 'B'),
 ]
 
-#2.b
+#from lesson
 schedule =  [
-    ('w', 1, 'A'),
-    ('w', 2, 'A'),
-    ('w', 3, 'B'),
-    ('w', 4, 'B'),
-    ('r', 1, 'B'),
     ('r', 2, 'B'),
+    ('w', 2, 'A'),
+    ('r', 1, 'A'),
     ('r', 3, 'A'),
-    ('r', 4, 'A')
+    ('w', 1, 'B'),
+    ('w', 2, 'B'),
+    ('w', 3, 'B')
 ]
-
 
 analyze(schedule)
 is_view_serializable(schedule)
