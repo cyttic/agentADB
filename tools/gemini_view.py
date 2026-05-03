@@ -195,35 +195,82 @@ def analyze(schedule):
     }
 
 
+# ── ANSI colour helpers ──────────────────────────────────
+RESET  = "\033[0m"
+BOLD   = "\033[1m"
+CYAN   = "\033[36m"
+YELLOW = "\033[33m"
+GREEN  = "\033[32m"
+RED    = "\033[31m"
+MAGENTA= "\033[35m"
+DIM    = "\033[2m"
+
+def h(text, *codes):
+    """Wrap text in ANSI codes."""
+    return "".join(codes) + str(text) + RESET
+
 def print_report(schedule):
-    print("=" * 60)
-    print("РАСПИСАНИЕ:")
+    print(h("=" * 60, DIM))
+    print(h("РАСПИСАНИЕ:", BOLD, CYAN))
     for i, op in enumerate(schedule):
         kind = "read " if op[0] == 'r' else "write"
-        print(f"  {i+1}. T{op[1]}: {kind}({op[2]})")
+        color = YELLOW if op[0] == 'r' else MAGENTA
+        print(f"  {i+1}. {h('T'+str(op[1]), BOLD)}: {h(kind+'('+op[2]+')', color)}")
 
     r = analyze(schedule)
     print()
-    print("АНАЛИЗ:")
+    print(h("АНАЛИЗ:", BOLD, CYAN))
     print(f"  Транзакции   : {['T'+str(t) for t in r['transactions']]}")
     print(f"  Рёбра графа  : {['T'+str(a)+'→T'+str(b) for a,b in r['edges']] or '(нет)'}")
-    print(f"  Цикл в графе : {'Да' if r['cycle'] else 'Нет'}")
-    print(f"  Blind writes : {['T'+str(t) for t in r['blind_writes']] or '(нет)'}")
+    cycle_val = h('Да', RED, BOLD) if r['cycle'] else h('Нет', GREEN, BOLD)
+    print(f"  Цикл в графе : {cycle_val}")
+    bw = ', '.join(h('T'+str(t), YELLOW, BOLD) for t in r['blind_writes'])
+    print(f"  Blind writes : {bw or '(нет)'}")
     print(f"  Reads-from   : {[f'T{w}→T{rd}({o})' for w,rd,o in r['reads_from']] or '(нет)'}")
     print()
-    print(f"ВЕРДИКТ : {r['verdict']}")
-    print(f"ПРИЧИНА : {r['reason']}")
+
+    if r['verdict'].startswith("VIEW-SERIAL"):
+        verdict_str = h(r['verdict'], GREEN, BOLD)
+    else:
+        verdict_str = h(r['verdict'], RED, BOLD)
+    print(f"{h('ВЕРДИКТ', BOLD)} : {verdict_str}")
+    print(f"{h('ПРИЧИНА', BOLD)} : {r['reason']}")
 
     if r['serial_schedule'] is not None:
+        s = r['serial_schedule']
         print()
-        print(f"  Эквивалентный серийный порядок: "
-              f"{' → '.join('T'+str(t) for t in r['serial_order'])}")
-        print("  Эквивалентное серийное расписание:")
-        for i, op in enumerate(r['serial_schedule']):
+        order_str = h(' → '.join('T'+str(t) for t in r['serial_order']), GREEN, BOLD)
+        print(f"  {h('Эквивалентный серийный порядок:', BOLD, GREEN)} {order_str}")
+        print()
+        print(h("СЕРИЙНОЕ РАСПИСАНИЕ:", BOLD, CYAN))
+        for i, op in enumerate(s):
             kind = "read " if op[0] == 'r' else "write"
-            print(f"    {i+1}. T{op[1]}: {kind}({op[2]})")
+            color = YELLOW if op[0] == 'r' else MAGENTA
+            print(f"  {i+1}. {h('T'+str(op[1]), BOLD)}: {h(kind+'('+op[2]+')', color)}")
 
-    print("=" * 60)
+        rs = analyze(s)
+        print()
+        print(h("АНАЛИЗ СЕРИЙНОГО РАСПИСАНИЯ:", BOLD, CYAN))
+        print(f"  Транзакции   : {['T'+str(t) for t in rs['transactions']]}")
+        print(f"  Рёбра графа  : {['T'+str(a)+'→T'+str(b) for a,b in rs['edges']] or '(нет)'}")
+        cycle_val2 = h('Да', RED, BOLD) if rs['cycle'] else h('Нет', GREEN, BOLD)
+        print(f"  Цикл в графе : {cycle_val2}")
+        bw2 = ', '.join(h('T'+str(t), YELLOW, BOLD) for t in rs['blind_writes'])
+        print(f"  Blind writes : {bw2 or '(нет)'}")
+        print(f"  Reads-from   : {[f'T{w}→T{rd}({o})' for w,rd,o in rs['reads_from']] or '(нет)'}")
+        print()
+        print(f"  {h('View-условия (должны совпадать с исходным):', BOLD)}")
+        sig_orig = view_signature(schedule)
+        sig_ser  = view_signature(s)
+        labels = ["Initial reads", "Reads-from   ", "Final writes "]
+        for label, o, sv in zip(labels, sig_orig, sig_ser):
+            if o == sv:
+                mark = h("[OK]", GREEN, BOLD)
+            else:
+                mark = h("[MISMATCH]", RED, BOLD)
+            print(f"    {mark} {h(label, BOLD)}: {sorted(o)}")
+
+    print(h("=" * 60, DIM))
 
 
 # ---------- примеры ----------
