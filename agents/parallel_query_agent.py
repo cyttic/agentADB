@@ -67,21 +67,22 @@ def parse_db_schema(schema_json: str) -> str:
     Returns:
         Confirmation JSON with computed block counts per relation.
     """
+    print(f"[TOOL] parse_db_schema(schema_json='{schema_json}')")
     try:
         ctx = json.loads(schema_json)
         block_size = ctx.get("block_size", 2000)
         result = {"status": "ok", "block_counts": {}}
 
         for rel_name, rel in ctx.get("relations", {}).items():
-            num_fields  = len(rel.get("fields", []))
-            field_size  = rel.get("field_size", 10)
-            record_size = num_fields * field_size
+            num_fields        = len(rel.get("fields", []))
+            field_size        = rel.get("field_size", 10)
+            record_size       = num_fields * field_size
             records_per_block = max(1, block_size // record_size)
-            block_count = math.ceil(rel["record_count"] / records_per_block)
+            block_count       = math.ceil(rel["record_count"] / records_per_block)
             result["block_counts"][rel_name] = {
                 "record_size_bytes": record_size,
                 "records_per_block": records_per_block,
-                "block_count": block_count,
+                "block_count":       block_count,
             }
 
         return json.dumps(result, indent=2)
@@ -103,14 +104,15 @@ def compute_block_count(record_count: int, num_fields: int, field_size: int, blo
     Returns:
         JSON with record_size, records_per_block, block_count.
     """
+    print(f"[TOOL] compute_block_count(record_count={record_count}, num_fields={num_fields}, field_size={field_size}, block_size={block_size})")
     try:
-        record_size = num_fields * field_size
+        record_size       = num_fields * field_size
         records_per_block = max(1, block_size // record_size)
-        block_count = math.ceil(record_count / records_per_block)
+        block_count       = math.ceil(record_count / records_per_block)
         return json.dumps({
-            "record_size_bytes":  record_size,
-            "records_per_block":  records_per_block,
-            "block_count":        block_count,
+            "record_size_bytes": record_size,
+            "records_per_block": records_per_block,
+            "block_count":       block_count,
         }, indent=2)
     except Exception as e:
         return json.dumps({"error": str(e)})
@@ -133,6 +135,7 @@ def compute_selectivity(distinct_values: int, condition: str, record_count: int)
     Returns:
         JSON with selectivity factor and estimated result record count.
     """
+    print(f"[TOOL] compute_selectivity(distinct_values={distinct_values}, condition='{condition}', record_count={record_count})")
     try:
         parts = condition.split(":")
         if parts[0] == "eq":
@@ -145,8 +148,8 @@ def compute_selectivity(distinct_values: int, condition: str, record_count: int)
 
         estimated = math.ceil(sel * record_count)
         return json.dumps({
-            "selectivity":        round(sel, 6),
-            "estimated_records":  estimated,
+            "selectivity":       round(sel, 6),
+            "estimated_records": estimated,
         }, indent=2)
     except Exception as e:
         return json.dumps({"error": str(e)})
@@ -177,21 +180,21 @@ def compute_parallel_cost(
     Returns:
         JSON with parallel_time and total_time expressed in t_d / t_s units.
     """
+    print(f"[TOOL] compute_parallel_cost(algorithm='{algorithm}', block_count={block_count}, num_processors={num_processors}, blocks_to_transfer={blocks_to_transfer})")
     try:
-        p = num_processors
-        B = block_count
+        p  = num_processors
+        B  = block_count
         Bt = blocks_to_transfer
 
         if algorithm == "scan_round_robin":
-            local_blocks = math.ceil(B / p)
+            local_blocks  = math.ceil(B / p)
             parallel_time = f"{local_blocks} * t_d"
             total_time    = f"{B} * t_d"
 
         elif algorithm == "scan_range":
-            # Only relevant processors work
             local_blocks  = math.ceil(B / p)
             parallel_time = f"{local_blocks} * t_d"
-            total_time    = f"{local_blocks} * t_d"  # only those processors active
+            total_time    = f"{local_blocks} * t_d"
 
         elif algorithm == "scan_hash":
             local_blocks  = math.ceil(B / p)
@@ -259,7 +262,6 @@ def build_agent():
     llm_with_tools = llm.bind_tools(tools)
 
     def call_llm(state: QueryAgentState):
-        # Inject db_context as a system note if it exists
         ctx_note = ""
         if state.get("db_context"):
             ctx_note = f"\n\nCurrent DB context:\n{json.dumps(state['db_context'], indent=2)}"
