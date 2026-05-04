@@ -2,19 +2,20 @@
 agents/parallel_query_agent.py
 ================================
 LangGraph agent for parallel database query cost analysis.
-Exposes build_agent() → compiled graph.
 
-State includes db_context which persists across turns:
-  - relations: {name: {fields, record_count, field_size}}
-  - block_size: int (bytes)
-  - num_processors: int
-  - t_d: symbol/value for disk access cost
-  - t_s: symbol/value for block transfer cost
+Pure orchestration — all math is in tools/db_ops.py.
+
+The agent:
+  1. Parses the schema once (sizes converted to BLOCKS).
+  2. For each operation in the query (Select / Sort / Join):
+     a. Picks the right algorithm from query type + data distribution.
+     b. Calls the corresponding cost tool.
+  3. Composes costs if the query chains multiple operations.
+  4. Reports Elapsed and Total in symbolic form (never reduced).
 """
 
 import os
 import json
-import math
 from typing import Annotated
 
 from langchain_openai import ChatOpenAI
@@ -25,225 +26,233 @@ from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
 from typing_extensions import TypedDict
 
+from tools.db_ops import (
+    parse_schema             as _parse_schema,
+    decide_select_algorithm  as _decide_select_algorithm,
+    select_cost              as _select_cost,
+    sort_cost                as _sort_cost,
+    join_cost                as _join_cost,
+    compose_costs            as _compose_costs,
+)
+
 
 # ══════════════════════════════════════════════════════════════
-#  AGENT STATE  (includes persistent db_context)
+#  AGENT STATE
 # ══════════════════════════════════════════════════════════════
 
 class QueryAgentState(TypedDict):
     messages:   Annotated[list, add_messages]
-    db_context: dict   # persists schema + params across turns
+    db_context: dict   # canonical schema (sizes in blocks) — persists across turns
 
 
 # ══════════════════════════════════════════════════════════════
-#  TOOLS
+#  TOOL WRAPPERS  (LangChain @tool around pure functions in db_ops)
 # ══════════════════════════════════════════════════════════════
 
 @tool
-def parse_db_schema(schema_json: str) -> str:
+def parse_schema(schema_json: str) -> str:
     """
-    Parse and store database schema, table sizes, and system parameters.
-
+    Parse and store DB schema. Sizes are converted to BLOCKS internally.
     Call this FIRST when the user describes a database setup.
 
-    Args:
-        schema_json: JSON string with structure:
-        {
-          "block_size": 2000,
-          "num_processors": 10,
-          "t_d": "t_d",
-          "t_s": "t_s",
-          "relations": {
-            "Customers": {"fields": ["cid","name","city"], "record_count": 1000000, "field_size": 10},
-            "Orders":    {"fields": ["pid","cid","date","quantity"], "record_count": 100000000, "field_size": 10},
-            "Products":  {"fields": ["pid","name","price"], "record_count": 1000000, "field_size": 10}
-          },
-          "field_info": {
-            "Orders.quantity": {"distinct_values": 100, "range": "1..100", "distribution": "uniform"},
-            "pid":             {"distinct_values": 1000, "distribution": "uniform"}
-          }
-        }
+    PRIORITY RULE for block_count per relation:
+      1. "block_count" given directly → use as-is (no calculation needed).
+      2. "record_count" + "field_size_bytes" given → calculate from those.
+      3. Only "record_count" given → use as proxy.
+    Never ask the user for missing fields — work with what is provided.
 
-    Returns:
-        Confirmation JSON with computed block counts per relation.
+    Required top-level: num_processors.
+    Optional top-level: block_size (default 2000).
+
+    Per-relation fields:
+      - fields, key, distribution ("round_robin"|"hash(F)"|"range(F)")
+      - block_count  (if known directly)  OR
+      - record_count + field_size_bytes   (if block_count not given)
+
+    Returns canonical schema with all sizes in BLOCKS.
     """
-    print(f"[TOOL] parse_db_schema(schema_json='{schema_json}')")
     try:
-        ctx = json.loads(schema_json)
-        block_size = ctx.get("block_size", 2000)
-        result = {"status": "ok", "block_counts": {}}
-
-        for rel_name, rel in ctx.get("relations", {}).items():
-            num_fields        = len(rel.get("fields", []))
-            field_size        = rel.get("field_size", 10)
-            record_size       = num_fields * field_size
-            records_per_block = max(1, block_size // record_size)
-            block_count       = math.ceil(rel["record_count"] / records_per_block)
-            result["block_counts"][rel_name] = {
-                "record_size_bytes": record_size,
-                "records_per_block": records_per_block,
-                "block_count":       block_count,
-            }
-
+        result = _parse_schema(schema_json)
         return json.dumps(result, indent=2)
     except Exception as e:
         return json.dumps({"error": str(e)})
 
 
 @tool
-def compute_block_count(record_count: int, num_fields: int, field_size: int, block_size: int) -> str:
-    """
-    Compute the number of disk blocks needed for a relation.
-
-    Args:
-        record_count: Total number of records.
-        num_fields:   Number of fields per record.
-        field_size:   Size of each field in bytes.
-        block_size:   Block size in bytes.
-
-    Returns:
-        JSON with record_size, records_per_block, block_count.
-    """
-    print(f"[TOOL] compute_block_count(record_count={record_count}, num_fields={num_fields}, field_size={field_size}, block_size={block_size})")
-    try:
-        record_size       = num_fields * field_size
-        records_per_block = max(1, block_size // record_size)
-        block_count       = math.ceil(record_count / records_per_block)
-        return json.dumps({
-            "record_size_bytes": record_size,
-            "records_per_block": records_per_block,
-            "block_count":       block_count,
-        }, indent=2)
-    except Exception as e:
-        return json.dumps({"error": str(e)})
-
-
-@tool
-def compute_selectivity(distinct_values: int, condition: str, record_count: int) -> str:
-    """
-    Compute selectivity and estimated result size for a simple condition.
-
-    Supports conditions like:
-      - "eq:650"       → equality  (1 / distinct_values)
-      - "range:50:100" → range     (range_size / distinct_values)
-
-    Args:
-        distinct_values: Number of distinct values for the field.
-        condition:       Condition string as described above.
-        record_count:    Total records in the relation.
-
-    Returns:
-        JSON with selectivity factor and estimated result record count.
-    """
-    print(f"[TOOL] compute_selectivity(distinct_values={distinct_values}, condition='{condition}', record_count={record_count})")
-    try:
-        parts = condition.split(":")
-        if parts[0] == "eq":
-            sel = 1 / distinct_values
-        elif parts[0] == "range":
-            lo, hi = int(parts[1]), int(parts[2])
-            sel = (hi - lo + 1) / distinct_values
-        else:
-            return json.dumps({"error": f"Unknown condition type: {parts[0]}"})
-
-        estimated = math.ceil(sel * record_count)
-        return json.dumps({
-            "selectivity":       round(sel, 6),
-            "estimated_records": estimated,
-        }, indent=2)
-    except Exception as e:
-        return json.dumps({"error": str(e)})
-
-
-@tool
-def compute_parallel_cost(
-    algorithm: str,
-    block_count: int,
-    num_processors: int,
-    blocks_to_transfer: int = 0,
+def decide_select_algorithm(
+    question_field: str,
+    question_type:  str,
+    partition_key:  str,
+    distribution:   str,
 ) -> str:
     """
-    Compute parallel and total time for a distributed operation.
-
-    Algorithms supported:
-      - "scan_round_robin"  : each processor scans block_count / num_processors blocks
-      - "scan_range"        : only processors holding relevant range participate
-      - "scan_hash"         : only processors holding matching hash buckets participate
-      - "broadcast_join"    : one relation broadcast to all, each scans local partition
+    Decide which Select algorithm (alg2 / alg3) to use.
 
     Args:
-        algorithm:           One of the algorithm names above.
-        block_count:         Total blocks of the main relation.
-        num_processors:      Number of processors.
-        blocks_to_transfer:  Blocks transferred between processors (for joins/broadcasts).
+        question_field: Field used in the WHERE condition (e.g. "pid").
+        question_type:  "point" (id=10) | "range" (id>5 AND id<10) | "scan" (id!=10).
+        partition_key:  The relation's partition key.
+        distribution:   "round_robin" | "hash(<field>)" | "range(<field>)".
 
-    Returns:
-        JSON with parallel_time and total_time expressed in t_d / t_s units.
+    Returns JSON with chosen algorithm and reason.
     """
-    print(f"[TOOL] compute_parallel_cost(algorithm='{algorithm}', block_count={block_count}, num_processors={num_processors}, blocks_to_transfer={blocks_to_transfer})")
     try:
-        p  = num_processors
-        B  = block_count
-        Bt = blocks_to_transfer
+        result = _decide_select_algorithm(
+            question_field, question_type, partition_key, distribution
+        )
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
 
-        if algorithm == "scan_round_robin":
-            local_blocks  = math.ceil(B / p)
-            parallel_time = f"{local_blocks} * t_d"
-            total_time    = f"{B} * t_d"
 
-        elif algorithm == "scan_range":
-            local_blocks  = math.ceil(B / p)
-            parallel_time = f"{local_blocks} * t_d"
-            total_time    = f"{local_blocks} * t_d"
+@tool
+def select_cost(
+    block_count:         int,
+    num_processors:      int,
+    algorithm:           str,
+    relevant_processors: int = 1,
+) -> str:
+    """
+    Compute Elapsed and Total cost for a Select operation.
 
-        elif algorithm == "scan_hash":
-            local_blocks  = math.ceil(B / p)
-            parallel_time = f"{local_blocks} * t_d"
-            total_time    = f"{local_blocks} * t_d"
+    All sizes must be in BLOCKS.
+    For alg2: every processor participates.
+    For alg3: only `relevant_processors` participate.
 
-        elif algorithm == "broadcast_join":
-            local_scan    = math.ceil(B / p)
-            parallel_time = f"{Bt} * t_s + {local_scan} * t_d"
-            total_time    = f"{p} * {Bt} * t_s + {B} * t_d"
+    Returns JSON with elapsed, total (symbolic strings), and explanation.
+    """
+    try:
+        result = _select_cost(block_count, num_processors, algorithm, relevant_processors)
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
 
-        else:
-            return json.dumps({"error": f"Unknown algorithm: {algorithm}"})
 
-        return json.dumps({
-            "algorithm":     algorithm,
-            "parallel_time": parallel_time,
-            "total_time":    total_time,
-        }, indent=2)
+@tool
+def sort_cost(block_count: int) -> str:
+    """
+    Compute Elapsed and Total cost for a Sort operation.
+    Placeholder formula: 3 * t_d * B_s   (will be refined later).
 
+    Returns JSON with elapsed, total, explanation.
+    """
+    try:
+        result = _sort_cost(block_count)
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@tool
+def join_cost(blocks_s: int, blocks_t: int) -> str:
+    """
+    Compute Elapsed and Total cost for a Join operation.
+    Placeholder formula: 3 * t_d * (B_s + B_t)   (will be refined later).
+
+    Returns JSON with elapsed, total, explanation.
+    """
+    try:
+        result = _join_cost(blocks_s, blocks_t)
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@tool
+def compose_costs(steps_json: str) -> str:
+    """
+    Compose costs from multiple chained operations (e.g. Select-Join, Select-Sort).
+
+    Args:
+        steps_json: JSON array of step results, each with "elapsed" and "total" keys.
+                    Example:
+                    [
+                      {"operation": "select", "elapsed": "1500 * t_d", "total": "15000 * t_d"},
+                      {"operation": "join",   "elapsed": "3 * 16500 * t_d", "total": "3 * 16500 * t_d"}
+                    ]
+
+    Returns combined Elapsed and Total as symbolic strings.
+    """
+    try:
+        steps  = json.loads(steps_json)
+        result = _compose_costs(steps)
+        return json.dumps(result, indent=2)
     except Exception as e:
         return json.dumps({"error": str(e)})
 
 
 tools = [
-    parse_db_schema,
-    compute_block_count,
-    compute_selectivity,
-    compute_parallel_cost,
+    parse_schema,
+    decide_select_algorithm,
+    select_cost,
+    sort_cost,
+    join_cost,
+    compose_costs,
 ]
+
+
+# ══════════════════════════════════════════════════════════════
+#  SYSTEM PROMPT  (decision logic for the agent)
+# ══════════════════════════════════════════════════════════════
 
 SYSTEM_PROMPT = """You are a parallel database systems expert specializing in query cost analysis.
 
-You have these tools:
-1. parse_db_schema       — call FIRST to store the DB schema, sizes, and parameters
-2. compute_block_count   — calculate blocks for any relation
-3. compute_selectivity   — estimate result size after a filter condition
-4. compute_parallel_cost — compute parallel and total execution time
+═══ CORE PRINCIPLES ═══
 
-When a user gives you a query problem:
-1. Parse and confirm the schema using parse_db_schema (once per session).
-2. For each query:
-   a. Write the Relational Algebra (RA) expression.
-   b. Identify the partition method (round-robin / range / hash) and choose the algorithm.
-   c. Use compute_block_count and compute_selectivity to get exact numbers.
-   d. Use compute_parallel_cost to get parallel and total time.
-   e. Explain each step clearly, showing the formula and substituted values.
-3. Always show both parallel time and total time.
-4. Express costs in terms of t_d (disk access) and t_s (block transfer).
+1. ALL SIZES ARE IN BLOCKS, never bytes. If input is in bytes, parse_schema converts.
+2. NEVER REDUCE NUMERICAL EXPRESSIONS. Always keep symbolic form.
+   GOOD:  "Total = 9 * 10^3 * (t_d + t_s)"
+   BAD:   "Total = 9000 * t_d + 9000 * t_s"
+3. Always report TWO values: Elapsed (parallel time) and Total (across all procs).
+4. Express costs only in t_d (disk access) and t_s (block transfer).
+
+═══ ATOMIC OPERATIONS ═══
+
+The query may contain ANY combination of these three atomic operations:
+
+▶ SELECT — three algorithms exist:
+   • alg1 — naive, ignored (never used).
+   • alg2 — local search on EVERY processor, results sent to coordinator.
+              Every proc participates → Total = p × Elapsed.
+   • alg3 — only relevant processor(s) participate. Elapsed = Total (when 1 proc).
+
+   Algorithm choice depends on:
+     - Question type: "point" (id=10) | "range" (5<id<10) | "scan" (id!=10)
+     - Data distribution: round_robin | hash(<field>) | range(<field>)
+     - Whether the question field matches the partition field
+
+   Decision logic (use decide_select_algorithm tool — DO NOT decide by hand):
+     - round_robin                          → alg2 (no locality)
+     - hash(F) + question on F + point      → alg3 (hash gives exact proc)
+     - hash(F) + question on F + range/scan → alg2 (hash breaks order)
+     - range(F) + question on F + point/range → alg3 (range preserves order)
+     - question on different field than partition → alg2
+
+▶ SORT — placeholder formula: 3 * t_d * B_s   (will be refined)
+
+▶ JOIN — placeholder formula: 3 * t_d * (B_s + B_t)   (will be refined)
+
+═══ COMPOUND QUERIES ═══
+
+A task may chain operations (e.g. Select-Join, Select-Sort-Join).
+For these:
+  1. Compute cost of each atomic step separately.
+  2. Pass the intermediate result size in BLOCKS to the next step.
+  3. Use compose_costs to combine the final Elapsed and Total.
+
+═══ WORKFLOW ═══
+
+1. Call parse_schema FIRST (once per session) to get canonical schema with sizes in blocks.
+2. Identify which atomic operations the query needs and their order.
+3. For each Select:
+   a. Call decide_select_algorithm with question type + distribution.
+   b. Call select_cost with the chosen algorithm.
+4. For each Sort/Join: call sort_cost / join_cost.
+5. If multiple operations: call compose_costs to combine.
+6. Present the final answer:
+   • Relational Algebra expression
+   • Algorithm choice + reason for each step
+   • Elapsed and Total in symbolic form
 
 LANGUAGE RULE: Always respond in Russian, regardless of input language.
 """
@@ -264,7 +273,7 @@ def build_agent():
     def call_llm(state: QueryAgentState):
         ctx_note = ""
         if state.get("db_context"):
-            ctx_note = f"\n\nCurrent DB context:\n{json.dumps(state['db_context'], indent=2)}"
+            ctx_note = f"\n\nCurrent DB context (sizes in blocks):\n{json.dumps(state['db_context'], indent=2)}"
 
         messages = [SystemMessage(content=SYSTEM_PROMPT + ctx_note)] + state["messages"]
         response = llm_with_tools.invoke(messages)
