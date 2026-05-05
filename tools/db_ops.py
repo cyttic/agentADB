@@ -86,7 +86,29 @@ def parse_schema(schema_json):
         "field_info":     ctx.get("field_info", {}),
     }
 
-    for name, rel in ctx.get("relations", {}).items():
+    # Normalise relations: accept both dict {"Name": {...}} and list [{"name": "Name", ...}]
+    raw_relations = ctx.get("relations", {})
+    if isinstance(raw_relations, list):
+        relations_dict = {}
+        for item in raw_relations:
+            item = dict(item)  # copy so we can pop safely
+            # relation name may be under "name", "table", or "relation" key
+            rel_name = (
+                item.pop("name", None)
+                or item.pop("table", None)
+                or item.pop("relation", None)
+                or f"relation_{len(relations_dict)}"
+            )
+            # flatten nested fields list [{"field": "x", "key": true}] -> ["x"] + key
+            if "fields" in item and isinstance(item["fields"], list):
+                if item["fields"] and isinstance(item["fields"][0], dict):
+                    keys = [f["field"] for f in item["fields"] if f.get("key")]
+                    item["key"] = keys[0] if keys else item.get("key")
+                    item["fields"] = [f["field"] for f in item["fields"]]
+            relations_dict[rel_name] = item
+        raw_relations = relations_dict
+
+    for name, rel in raw_relations.items():
 
         # ── Determine block_count (priority order) ──────────────
         if "block_count" in rel:
@@ -238,19 +260,137 @@ def select_cost(block_count, num_processors, algorithm, relevant_processors=1):
 
 
 # ══════════════════════════════════════════════════════════════
-#  SORT  (placeholder — refine later)
+#  SORT  — two algorithms based on distribution
 # ══════════════════════════════════════════════════════════════
+#
+# alg1 — for Round-Robin or Hash distribution:
+#   Step 1: every proc sorts its local partition:
+#             3 * bs_per_proc * t_d  (parallel)
+#   Step 2: (p-1) procs send their sorted runs to proc 0:
+#             bs_per_proc * (p-1) * t_s  (transfer cost)
+#   Step 3: proc 0 receives (p-1) runs from others:
+#             (p-1) * bs_per_proc * (t_s + t_d)
+#   Step 4: proc 0 merges all runs:
+#             block_count * t_d
+#
+#   Elapsed = step1 + step2 + step3 + step4
+#           = 3*bs * t_d  +  bs*(p-1) * t_s  +  (p-1)*bs*(t_s+t_d)  +  B * t_d
+#   Total   = p * step1  +  step2  +  step3  +  step4
+#           = 3*B * t_d  +  bs*(p-1) * t_s  +  (p-1)*bs*(t_s+t_d)  +  B * t_d
+#
+# alg2 — for Range distribution on the sort field:
+#   Each proc sorts its local partition independently — no communication needed.
+#   Elapsed = 3 * bs_per_proc * t_d
+#   Total   = 3 * bs_per_proc * t_d * p  =  3 * block_count * t_d
 
-def sort_cost(block_count):
-    """Placeholder formula: 3 * t_d * B_s"""
-    print(f"[TOOL] sort_cost(block_count={block_count})")
-    elapsed = f"3 * {block_count} * t_d"
-    total   = f"3 * {block_count} * t_d"
+def decide_sort_algorithm(sort_field, distribution):
+    """
+    Decide which Sort algorithm to use.
+
+    alg1 — Round-Robin or Hash: local sort + merge on one proc.
+    alg2 — Range on the sort field: fully local sort, no merge needed.
+
+    Returns {"algorithm": "alg1"|"alg2", "reason": "..."}
+    """
+    print(f"[TOOL] decide_sort_algorithm(sort_field='{sort_field}', distribution='{distribution}')")
+
+    dist_lower = distribution.lower()
+
+    if dist_lower.startswith("range("):
+        dist_field = distribution[distribution.index("(") + 1 : distribution.index(")")]
+        if dist_field.lower() == sort_field.lower():
+            return {
+                "algorithm": "alg2",
+                "reason": (
+                    f"range({dist_field}) matches sort field '{sort_field}' → "
+                    f"data already partitioned in order, each proc sorts locally — no merge needed."
+                ),
+            }
+        else:
+            return {
+                "algorithm": "alg1",
+                "reason": (
+                    f"range({dist_field}) does not match sort field '{sort_field}' → "
+                    f"cannot exploit range locality, must gather and merge."
+                ),
+            }
+
+    return {
+        "algorithm": "alg1",
+        "reason": (
+            f"Distribution '{distribution}' provides no ordering guarantee for '{sort_field}' → "
+            f"alg1: local sort on all procs, then collect and merge on one proc."
+        ),
+    }
+
+
+def sort_cost(block_count, num_processors, algorithm):
+    """
+    Compute Elapsed and Total cost for a Sort operation.
+
+    alg1 (round-robin / hash):
+      Step 1  local sort on every proc:    Elapsed part = 3 * bs * t_d
+      Step 2  (p-1) procs send to proc 0: Elapsed part = (p-1) * bs * t_s
+      Step 3  proc 0 reads incoming runs:  Elapsed part = (p-1) * bs * (t_s + t_d)
+      Step 4  proc 0 merges all runs:      Elapsed part = B * t_d
+
+    alg2 (range on sort field):
+      Each proc sorts its local share independently.
+      Elapsed = 3 * bs * t_d,  Total = 3 * B * t_d
+    """
+    print(f"[TOOL] sort_cost(block_count={block_count}, num_processors={num_processors}, algorithm='{algorithm}')")
+
+    p  = num_processors
+    B  = block_count
+    bs = math.ceil(B / p)   # blocks per proc
+
+    if algorithm == "alg1":
+        # ── Step-by-step symbolic strings ──────────────────
+        step1_e = f"3 * {bs} * t_d"
+        step2_e = f"{bs} * {p-1} * t_s"
+        step3_e = f"{p-1} * {bs} * (t_s + t_d)"
+        step4_e = f"{B} * t_d"
+
+        step1_t = f"3 * {B} * t_d"     # all p procs do step1
+        step2_t = step2_e               # only (p-1) procs send — same as elapsed
+        step3_t = step3_e               # only proc 0 receives — same as elapsed
+        step4_t = step4_e               # only proc 0 merges — same as elapsed
+
+        elapsed = f"{step1_e} + {step2_e} + {step3_e} + {step4_e}"
+        total   = f"{step1_t} + {step2_t} + {step3_t} + {step4_t}"
+
+        explanation = "\n".join([
+            "alg1 (local sort + gather + merge):",
+            f"  Step 1 - all {p} procs sort {bs} blocks locally:  {step1_e}  (elapsed) / {step1_t}  (total)",
+            f"  Step 2 - {p-1} procs send results to proc 0:      {step2_e}",
+            f"  Step 3 - proc 0 reads {p-1} incoming runs:        {step3_e}",
+            f"  Step 4 - proc 0 merges all {p} runs:              {step4_e}",
+            "",
+            f"  Elapsed = {elapsed}",
+            f"  Total   = {total}",
+        ])
+
+    elif algorithm == "alg2":
+        elapsed = f"3 * {bs} * t_d"
+        total   = f"3 * {B} * t_d"
+
+        explanation = "\n".join([
+            "alg2 (fully local sort - range partition matches sort field):",
+            f"  Each of {p} procs sorts its {bs} blocks independently, no communication.",
+            "",
+            f"  Elapsed = {elapsed}",
+            f"  Total   = {total}",
+        ])
+
+    else:
+        return {"error": f"Unknown sort algorithm: {algorithm}"}
+
     return {
         "operation":   "sort",
+        "algorithm":   algorithm,
         "elapsed":     elapsed,
         "total":       total,
-        "explanation": f"Sort: 3 * t_d * B_s where B_s = {block_count} (placeholder, will be refined).",
+        "explanation": explanation,
     }
 
 
