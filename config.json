@@ -1,0 +1,55 @@
+{
+  "_comment": "DB Assistant configuration file",
+  "default_provider": "openai",
+  "default_model": "gpt-4o",
+  "local_server": {
+    "host": "127.0.0.1",
+    "port": 9001,
+    "n_predict": 2048,
+    "temperature": 0.0,
+    "_comment": "Used when provider is 'local' (llama.cpp server). Change host/port to match your setup."
+  },
+  "ollama": {
+    "host": "127.0.0.1",
+    "port": 11434,
+    "_comment": "Used when provider is 'ollama'."
+  },
+  "providers": {
+    "openai": {
+      "env_key": "OPENAI_API_KEY",
+      "suggested_models": [
+        "gpt-4o",
+        "gpt-4o-mini",
+        "gpt-4-turbo",
+        "gpt-3.5-turbo"
+      ]
+    },
+    "anthropic": {
+      "env_key": "ANTHROPIC_API_KEY",
+      "suggested_models": [
+        "claude-opus-4-5",
+        "claude-sonnet-4-5",
+        "claude-haiku-4-5"
+      ]
+    },
+    "ollama": {
+      "suggested_models": [
+        "llama3",
+        "llama3.1",
+        "mistral",
+        "phi3",
+        "qwen2",
+        "gemma2"
+      ]
+    },
+    "local": {
+      "suggested_models": [
+        "llama-3",
+        "mistral-7b",
+        "phi-3",
+        "custom"
+      ],
+      "_comment": "Model name is just a label here \u2014 the server decides which model it runs."
+    }
+  }
+}
