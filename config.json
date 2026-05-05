@@ -1,9 +1,9 @@
 {
   "_comment": "DB Assistant configuration file",
   "default_provider": "openai",
-  "default_model": "gpt-4o",
+  "default_model": "gpt-5.4-nano",
   "local_server": {
-    "host": "192.168.1.120",
+    "host": "127.0.0.1",
     "port": 9001,
     "n_predict": 2048,
     "temperature": 0.0,
