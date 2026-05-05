@@ -161,11 +161,20 @@ def decide_select_algorithm(question_field, question_type, partition_key, distri
     """
     Decide which Select algorithm (alg2 / alg3) to use.
 
-    alg1 — naive, never used.
-    alg2 — every processor participates (local search + send results).
-    alg3 — only relevant processors participate.
+    alg1 -- naive, never used.
+    alg2 -- every processor participates (local search + send results).
+    alg3 -- only relevant processors participate (we know exactly which ones).
 
-    Returns: {"algorithm": "alg2"|"alg3", "reason": "..."}
+    Decision table:
+      round_robin + any                       -> alg2 (no locality)
+      hash(F) + question on F + point (=)     -> alg3 (hash gives exact proc)
+      hash(F) + question on F + range/scan    -> alg2 (hash breaks order)
+      range(F) + question on F + point (=)    -> alg3 (1 proc holds that value)
+      range(F) + question on F + range (>,<)  -> alg3 (subset of procs)
+      range(F) + question on F + scan (!=)    -> alg3 (complement of point:
+                                                        p-1 procs return everything,
+                                                        1 proc filters out excluded value)
+      question on field != partition field    -> alg2 (no locality for that field)
     """
     print(f"[TOOL] decide_select_algorithm(question_field='{question_field}', question_type='{question_type}', partition_key='{partition_key}', distribution='{distribution}')")
 
@@ -173,47 +182,72 @@ def decide_select_algorithm(question_field, question_type, partition_key, distri
     if "(" in distribution and ")" in distribution:
         dist_field = distribution[distribution.index("(") + 1 : distribution.index(")")]
 
+    # Round-robin: no data locality at all
     if distribution == "round_robin":
         return {
-            "algorithm": "alg2",
-            "reason": "Round-robin: data spread evenly without locality, must search every processor.",
+            "algorithm":           "alg2",
+            "relevant_processors": None,
+            "reason":              "Round-robin: data spread evenly without locality, must search every processor.",
         }
 
+    # Question field does not match partition field
     if dist_field != question_field:
         return {
-            "algorithm": "alg2",
-            "reason": f"Question on '{question_field}' but partitioned by '{dist_field}' — cannot pinpoint relevant processors.",
+            "algorithm":           "alg2",
+            "relevant_processors": None,
+            "reason":              f"Question on '{question_field}' but partitioned by '{dist_field}' -- cannot pinpoint relevant processors.",
         }
 
+    # Hash partitioning
     if distribution.startswith("hash("):
         if question_type == "point":
             return {
-                "algorithm": "alg3",
-                "reason": f"hash({dist_field}) + point search on '{question_field}' → exact processor identifiable.",
+                "algorithm":           "alg3",
+                "relevant_processors": 1,
+                "reason":              f"hash({dist_field}) + point search (=) on '{question_field}' -> hash function gives exact processor.",
             }
         else:
             return {
-                "algorithm": "alg2",
-                "reason": f"hash({dist_field}) does not preserve order → range/scan must check all processors.",
+                "algorithm":           "alg2",
+                "relevant_processors": None,
+                "reason":              f"hash({dist_field}) does not preserve order -> range/scan cannot pinpoint processors, must check all.",
             }
 
+    # Range partitioning
     if distribution.startswith("range("):
-        if question_type in ("point", "range"):
+        if question_type == "point":
             return {
-                "algorithm": "alg3",
-                "reason": f"range({dist_field}) + {question_type} search on '{question_field}' → only relevant processors participate.",
+                "algorithm":           "alg3",
+                "relevant_processors": 1,
+                "reason":              f"range({dist_field}) + point search (=) on '{question_field}' -> exactly 1 processor holds that value.",
             }
-        else:
+        elif question_type == "range":
             return {
-                "algorithm": "alg2",
-                "reason": f"range({dist_field}) + scan on '{question_field}' → must check all processors.",
+                "algorithm":           "alg3",
+                "relevant_processors": None,
+                "reason":              f"range({dist_field}) + range search on '{question_field}' -> only processors holding the relevant range participate.",
+            }
+        elif question_type == "scan":
+            # != is the complement of a point search:
+            # (p-1) procs return their full local partition (100% match)
+            # 1 proc holding the excluded value filters it out locally
+            # we know exactly which procs participate -> alg3
+            return {
+                "algorithm":           "alg3",
+                "relevant_processors": None,
+                "reason":              (
+                    f"range({dist_field}) + scan (!=) on '{question_field}' -> "
+                    f"complement of a point search: data locality is preserved. "
+                    f"(p-1) procs return their full local partition (100%% match); "
+                    f"1 proc holding the excluded value filters it out locally. -> alg3."
+                ),
             }
 
     return {
-        "algorithm": "alg2",
-        "reason": f"Unknown distribution '{distribution}', falling back to alg2.",
+        "algorithm":           "alg2",
+        "relevant_processors": None,
+        "reason":              f"Unknown distribution '{distribution}', falling back to alg2.",
     }
-
 
 def select_cost(block_count, num_processors, algorithm, relevant_processors=1):
     """

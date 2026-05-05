@@ -441,10 +441,14 @@ The query may contain ANY combination of these three atomic operations:
      - Whether the question field matches the partition field
 
    Decision logic (use decide_select_algorithm tool — DO NOT decide by hand):
-     - round_robin                          → alg2 (no locality)
-     - hash(F) + question on F + point      → alg3 (hash gives exact proc)
-     - hash(F) + question on F + range/scan → alg2 (hash breaks order)
-     - range(F) + question on F + point/range → alg3 (range preserves order)
+     - round_robin + any                       → alg2 (no locality)
+     - hash(F) + question on F + point (=)     → alg3 (hash gives exact proc)
+     - hash(F) + question on F + range/scan    → alg2 (hash breaks order)
+     - range(F) + question on F + point (=)    → alg3 (1 proc holds that value)
+     - range(F) + question on F + range (>,<)  → alg3 (subset of procs)
+     - range(F) + question on F + scan (!=)    → alg3 (complement of point:
+                                                        p-1 procs return full partition,
+                                                        1 proc filters out excluded value)
      - question on different field than partition → alg2
 
 ▶ SORT — two algorithms based on distribution:
