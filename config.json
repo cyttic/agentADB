@@ -3,7 +3,7 @@
   "default_provider": "openai",
   "default_model": "gpt-4o",
   "local_server": {
-    "host": "127.0.0.1",
+    "host": "192.168.1.120",
     "port": 9001,
     "n_predict": 2048,
     "temperature": 0.0,
