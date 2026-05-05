@@ -219,24 +219,75 @@ DIM    = "\033[2m"
 
 PROVIDERS = ["openai", "anthropic", "ollama", "local"]
 
+# Models per provider — edit here to add/remove options
+PROVIDER_MODELS = {
+    "openai": [
+        "gpt-4o",
+        "gpt-4o-mini",
+        "gpt-5.4-mini",
+        "gpt-5.4-nano",
+    ],
+    "anthropic": [
+        "claude-opus-4-5",
+        "claude-sonnet-4-5",
+        "claude-haiku-4-5",
+    ],
+    "ollama": [
+        "llama3",
+        "llama3.1",
+        "mistral",
+        "phi3",
+        "qwen2",
+        "gemma2",
+    ],
+    # local has no model list — uses config.json settings directly
+}
+
+
+def _local_label(cfg: dict) -> str:
+    """Build display label for local option, e.g. 'local[127.0.0.1:9001]'."""
+    saved = cfg.get("local_server", {})
+    host  = saved.get("host", "127.0.0.1")
+    port  = saved.get("port", 9001)
+    return f"local[{host}:{port}]"
+
+
+def _ollama_label(cfg: dict) -> str:
+    """Build display label for ollama option, e.g. 'ollama[127.0.0.1:11434]'."""
+    saved = cfg.get("ollama", {})
+    host  = saved.get("host", "127.0.0.1")
+    port  = saved.get("port", 11434)
+    return f"ollama[{host}:{port}]"
+
 
 def select_llm_interactive() -> LLMConfig:
     """
     Interactive terminal prompt to select provider + model.
-    For local/ollama: reads saved host/port from config.json,
-    lets user update and optionally save them.
+
+    - openai / anthropic: shows model list, asks to pick one.
+    - ollama:             shows host:port from config, asks model name.
+    - local:              reads ALL settings from config.json silently —
+                          no questions asked, just confirm and go.
+
     Returns a ready LLMConfig.
     """
     cfg = load_config()
 
-    print(f"\n{BOLD}{CYAN}═══ LLM Configuration ═══{RESET}")
+    print(f"\n{BOLD}{CYAN}=== LLM Configuration ==={RESET}")
 
-    # ── Choose provider ──────────────────────────────────────
+    # Build display labels
+    labels = {
+        "openai":    "openai",
+        "anthropic": "anthropic",
+        "ollama":    _ollama_label(cfg),
+        "local":     _local_label(cfg),
+    }
+
     default_provider = cfg.get("default_provider", "openai")
     print(f"\n{BOLD}Select provider:{RESET}")
     for i, p in enumerate(PROVIDERS, 1):
-        tag = f" {DIM}(default){RESET}" if p == default_provider else ""
-        print(f"  {BOLD}{CYAN}{i}{RESET}. {p}{tag}")
+        tag   = f" {DIM}(default){RESET}" if p == default_provider else ""
+        print(f"  {BOLD}{CYAN}{i}{RESET}. {labels[p]}{tag}")
 
     while True:
         try:
@@ -247,62 +298,28 @@ def select_llm_interactive() -> LLMConfig:
                 break
         except (ValueError, IndexError):
             pass
-        print(f"  {YELLOW}Enter a number 1–{len(PROVIDERS)}{RESET}")
+        print(f"  {YELLOW}Enter a number 1-{len(PROVIDERS)}{RESET}")
 
-    # ── Choose model ─────────────────────────────────────────
-    suggested = cfg.get("providers", {}).get(provider, {}).get("suggested_models", [])
-    base_url  = None
-    n_predict = cfg.get("local_server", {}).get("n_predict", 2048)
+    # ── Local: read everything from config, ask nothing ──────
+    if provider == "local":
+        saved     = cfg.get("local_server", {})
+        host      = saved.get("host", "127.0.0.1")
+        port      = saved.get("port", 9001)
+        n_predict = saved.get("n_predict", 2048)
+        base_url  = f"http://{host}:{port}"
+        model     = "local"
+        print(f"\n{BOLD}{GREEN}Using:{RESET} {BOLD}{_local_label(cfg)}{RESET}  "
+              f"{DIM}(n_predict={n_predict}, edit config.json to change){RESET}")
+        return LLMConfig(provider=provider, model=model, base_url=base_url, n_predict=n_predict)
 
-    if provider in ("local", "ollama"):
-        # Read saved host/port
-        section  = "local_server" if provider == "local" else "ollama"
-        saved    = cfg.get(section, {})
-        def_host = saved.get("host", "127.0.0.1")
-        def_port = saved.get("port", 9001 if provider == "local" else 11434)
+    # ── Ollama: host from config, ask model ──────────────────
+    if provider == "ollama":
+        saved     = cfg.get("ollama", {})
+        host      = saved.get("host", "127.0.0.1")
+        port      = saved.get("port", 11434)
+        base_url  = f"http://{host}:{port}"
+        suggested = PROVIDER_MODELS["ollama"]
 
-        print(f"\n{BOLD}Local server address:{RESET}")
-        print(f"  Current: {DIM}{def_host}:{def_port}{RESET}")
-        raw_host = input(f"  Host [{def_host}]: ").strip()
-        raw_port = input(f"  Port [{def_port}]: ").strip()
-
-        host = raw_host if raw_host else def_host
-        port = int(raw_port) if raw_port.isdigit() else def_port
-        base_url = f"http://{host}:{port}"
-
-        # Offer to save
-        save_q = input(f"  Save {host}:{port} as default? [y/N]: ").strip().lower()
-        if save_q == "y":
-            if section not in cfg:
-                cfg[section] = {}
-            cfg[section]["host"] = host
-            cfg[section]["port"] = port
-            save_config(cfg)
-
-        if provider == "local":
-            # n_predict
-            raw_np = input(f"  n_predict [{n_predict}]: ").strip()
-            n_predict = int(raw_np) if raw_np.isdigit() else n_predict
-
-        # Model name (label only for local)
-        if suggested:
-            print(f"\n{BOLD}Model label (informational):{RESET}")
-            for i, m in enumerate(suggested, 1):
-                print(f"  {BOLD}{CYAN}{i}{RESET}. {m}")
-            print(f"  {BOLD}{CYAN}c{RESET}. Custom")
-            raw = input(f"{BOLD}Model [1-{len(suggested)}/c]: {RESET}").strip().lower()
-            if raw == "c":
-                model = input(f"{BOLD}Enter model name: {RESET}").strip() or "custom"
-            else:
-                try:
-                    model = suggested[int(raw) - 1]
-                except (ValueError, IndexError):
-                    model = "custom"
-        else:
-            model = input(f"{BOLD}Model name: {RESET}").strip() or "custom"
-
-    else:
-        # OpenAI / Anthropic
         print(f"\n{BOLD}Select model:{RESET}")
         for i, m in enumerate(suggested, 1):
             print(f"  {BOLD}{CYAN}{i}{RESET}. {m}")
@@ -311,28 +328,40 @@ def select_llm_interactive() -> LLMConfig:
         while True:
             raw = input(f"{BOLD}Model [1-{len(suggested)}/c]: {RESET}").strip().lower()
             if raw == "c":
-                model = input(f"{BOLD}Enter model name: {RESET}").strip()
-                if model:
+                model = input(f"{BOLD}Enter model name: {RESET}").strip() or "custom"
+                break
+            try:
+                model = suggested[int(raw) - 1]
+                break
+            except (ValueError, IndexError):
+                print(f"  {YELLOW}Invalid, try again{RESET}")
+
+        print(f"\n{BOLD}{GREEN}Using:{RESET} {BOLD}{_ollama_label(cfg)}{RESET} / {BOLD}{model}{RESET}")
+        return LLMConfig(provider=provider, model=model, base_url=base_url)
+
+    # ── OpenAI / Anthropic: show model list ──────────────────
+    suggested = PROVIDER_MODELS.get(provider, [])
+
+    print(f"\n{BOLD}Select model:{RESET}")
+    for i, m in enumerate(suggested, 1):
+        print(f"  {BOLD}{CYAN}{i}{RESET}. {m}")
+    print(f"  {BOLD}{CYAN}c{RESET}. Custom")
+
+    while True:
+        raw = input(f"{BOLD}Model [1-{len(suggested)}/c]: {RESET}").strip().lower()
+        if raw == "c":
+            model = input(f"{BOLD}Enter model name: {RESET}").strip()
+            if model:
+                break
+        else:
+            try:
+                idx = int(raw) - 1
+                if 0 <= idx < len(suggested):
+                    model = suggested[idx]
                     break
-            else:
-                try:
-                    idx = int(raw) - 1
-                    if 0 <= idx < len(suggested):
-                        model = suggested[idx]
-                        break
-                except (ValueError, IndexError):
-                    pass
-            print(f"  {YELLOW}Invalid, try again{RESET}")
+            except (ValueError, IndexError):
+                pass
+        print(f"  {YELLOW}Invalid, try again{RESET}")
 
-    # ── Confirm ──────────────────────────────────────────────
-    print(f"\n{BOLD}{GREEN}✓ Using:{RESET} {BOLD}{provider}{RESET} / {BOLD}{model}{RESET}", end="")
-    if base_url:
-        print(f" @ {DIM}{base_url}{RESET}", end="")
-    print()
-
-    return LLMConfig(
-        provider=provider,
-        model=model,
-        base_url=base_url,
-        n_predict=n_predict,
-    )
+    print(f"\n{BOLD}{GREEN}Using:{RESET} {BOLD}{provider}{RESET} / {BOLD}{model}{RESET}")
+    return LLMConfig(provider=provider, model=model)
