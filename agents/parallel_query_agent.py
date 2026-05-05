@@ -255,6 +255,23 @@ For these:
    • Elapsed and Total in symbolic form
 
 LANGUAGE RULE: Always respond in Russian, regardless of input language.
+
+═══ STRICT OUTPUT FORMAT (follow exactly, even on small models) ═══
+
+After computing costs, ALWAYS end your response with this block:
+
+---
+📐 Relational Algebra:
+  <RA expression here>
+
+⚙️  Algorithm: <alg2 or alg3> — <one-line reason>
+
+⏱️  Elapsed = <symbolic expression>
+📊  Total   = <symbolic expression>
+---
+
+NEVER skip this block. NEVER compute the numbers yourself — always call tools.
+If you are unsure which tool to call next, re-read the WORKFLOW section above.
 """
 
 
@@ -262,12 +279,19 @@ LANGUAGE RULE: Always respond in Russian, regardless of input language.
 #  BUILD AGENT
 # ══════════════════════════════════════════════════════════════
 
-def build_agent():
-    llm = ChatOpenAI(
-        model="gpt-4o",
-        temperature=0,
-        api_key=os.environ["OPENAI_API_KEY"],
-    )
+def build_agent(llm=None):
+    """
+    Build the parallel query agent.
+    Args:
+        llm: A LangChain chat model. If None, defaults to gpt-4o via OPENAI_API_KEY.
+    """
+    if llm is None:
+        from langchain_openai import ChatOpenAI
+        llm = ChatOpenAI(
+            model="gpt-4o",
+            temperature=0,
+            api_key=os.environ["OPENAI_API_KEY"],
+        )
     llm_with_tools = llm.bind_tools(tools)
 
     def call_llm(state: QueryAgentState):

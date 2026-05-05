@@ -180,6 +180,20 @@ When a user gives you a schedule task:
 4. Explain the result clearly: verdict, reason, graph edges, serial order or cycle.
 
 LANGUAGE RULE: Always respond in Russian, regardless of input language.
+
+═══ STRICT OUTPUT FORMAT (follow exactly, even on small models) ═══
+
+After analysis, ALWAYS end your response with this block:
+
+---
+📋 Рёбра графа: <list of edges like T1→T2, or "(нет)">
+🔄 Цикл: <Да / Нет>
+🏷️  Вердикт: <CONFLICT-SERIALIZABLE / NOT CONFLICT-SERIALIZABLE / VIEW-SERIALIZABLE / NOT VIEW-SERIALIZABLE>
+📎 Причина: <one sentence>
+✅ Серийный порядок: <T1 → T2 → ... or "(нет — цикл)">
+---
+
+NEVER skip this block. NEVER guess results — always call tools first.
 """
 
 
@@ -195,12 +209,19 @@ class SerialAgentState(TypedDict):
 #  BUILD AGENT
 # ══════════════════════════════════════════════════════════════
 
-def build_agent():
-    llm = ChatOpenAI(
-        model="gpt-4o",
-        temperature=0,
-        api_key=os.environ["OPENAI_API_KEY"],
-    )
+def build_agent(llm=None):
+    """
+    Build the serializability agent.
+    Args:
+        llm: A LangChain chat model. If None, defaults to gpt-4o via OPENAI_API_KEY.
+    """
+    if llm is None:
+        from langchain_openai import ChatOpenAI
+        llm = ChatOpenAI(
+            model="gpt-4o",
+            temperature=0,
+            api_key=os.environ["OPENAI_API_KEY"],
+        )
     llm_with_tools = llm.bind_tools(tools)
 
     def call_llm(state: SerialAgentState):
