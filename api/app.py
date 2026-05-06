@@ -19,20 +19,19 @@ Or via python:
 """
 
 import sys
-import json
 from pathlib import Path
 
 # ── project root on path ─────────────────────────────────────
 ROOT = Path(__file__).parent.parent
-sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT))  # noqa: E402
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
 
-from llm_factory  import build_llm, LLMConfig, load_config
+from llm_factory  import LLMConfig, load_config
 from orchestrator import Orchestrator
 import agents.serializability_agent as _serial_mod
 import agents.parallel_query_agent  as _query_mod

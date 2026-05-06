@@ -25,9 +25,9 @@ from datetime import datetime
 
 # ── make sure project root is on the path ───────────────────
 ROOT = Path(__file__).parent.parent
-sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT))  # noqa: E402
 
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 from llm_factory  import build_llm, LLMConfig, load_config
 from orchestrator import Orchestrator
 
@@ -220,7 +220,7 @@ def print_summary(results: list):
     print(f"  Score  : {color}{BOLD}{score:.1f}%{RESET}")
 
     if by_diff:
-        print(f"\n  By difficulty:")
+        print("\n  By difficulty:")
         for diff, counts in sorted(by_diff.items()):
             t = counts["pass"] + counts["fail"]
             pct = counts["pass"] / t * 100 if t else 0

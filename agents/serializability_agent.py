@@ -7,11 +7,8 @@ Exposes build_agent() → compiled graph.
 
 import os
 import json
-from collections import defaultdict, deque
-from itertools import permutations
 from typing import Annotated
 
-from langchain_openai import ChatOpenAI
 from langchain_core.tools import tool
 from langchain_core.messages import SystemMessage
 from langgraph.graph import StateGraph, END
@@ -166,8 +163,8 @@ def check_conflict_serializability(schedule: list[list]) -> str:
 tools = [parse_schedule_from_text, check_view_serializability, check_conflict_serializability]
 
 def build_system_prompt(lang: str = "ru") -> str:
-    lang_rule = "Always respond in Russian, regardless of input language." if lang == "ru" else "Always respond in English, regardless of input language."
-    return """You are a database systems expert specializing in transaction schedule analysis.
+    _lang_rule = "Always respond in Russian, regardless of input language." if lang == "ru" else "Always respond in English, regardless of input language."  # noqa: F841
+    return f"""You are a database systems expert specializing in transaction schedule analysis.
 
 You have three tools:
 1. parse_schedule_from_text    — parses raw text schedules (use first if input is text)
@@ -181,7 +178,7 @@ When a user gives you a schedule task:
 3. Call the appropriate tool.
 4. Explain the result clearly: verdict, reason, graph edges, serial order or cycle.
 
-LANGUAGE RULE: {lang_rule}
+LANGUAGE RULE: {_lang_rule}
 
 ═══ STRICT OUTPUT FORMAT (follow exactly, even on small models) ═══
 
@@ -225,8 +222,7 @@ def build_agent(llm=None):
         llm: A LangChain chat model. If None, defaults to gpt-4o via OPENAI_API_KEY.
     """
     if llm is None:
-        from langchain_openai import ChatOpenAI
-        llm = ChatOpenAI(
+                llm = ChatOpenAI(
             model="gpt-4o",
             temperature=0,
             api_key=os.environ["OPENAI_API_KEY"],

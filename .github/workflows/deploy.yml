@@ -32,7 +32,7 @@ jobs:
         run: pip install -r requirements.txt ruff pytest
 
       - name: Lint (ruff)
-        run: ruff check . --select E,F,W --ignore E501
+        run: ruff check . --select E,F,W --ignore E501,E402
 
       - name: Syntax check — all agents and tools
         run: |

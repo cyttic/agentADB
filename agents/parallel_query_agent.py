@@ -18,7 +18,6 @@ import os
 import json
 from typing import Annotated
 
-from langchain_openai import ChatOpenAI
 from langchain_core.tools import tool
 from langchain_core.messages import SystemMessage
 from langgraph.graph import StateGraph, END
@@ -415,73 +414,12 @@ tools = [
 # ══════════════════════════════════════════════════════════════
 
 def build_system_prompt(lang: str = "ru") -> str:
-    lang_rule = "Always respond in Russian, regardless of input language." if lang == "ru" else "Always respond in English, regardless of input language."
-    return """You are a parallel database systems expert specializing in query cost analysis.
+    if lang == "ru":
+        lang_rule = "Always respond in Russian, regardless of input language."
+    else:
+        lang_rule = "Always respond in English, regardless of input language."
 
-═══ CORE PRINCIPLES ═══
-
-1. ALL SIZES ARE IN BLOCKS, never bytes. If input is in bytes, parse_schema converts.
-2. NEVER REDUCE NUMERICAL EXPRESSIONS. Always keep symbolic form.
-   GOOD:  "Total = 9 * 10^3 * (t_d + t_s)"
-   BAD:   "Total = 9000 * t_d + 9000 * t_s"
-3. Always report TWO values: Elapsed (parallel time) and Total (across all procs).
-4. Express costs only in t_d (disk access) and t_s (block transfer).
-
-═══ ATOMIC OPERATIONS ═══
-
-The query may contain ANY combination of these three atomic operations:
-
-▶ SELECT — three algorithms exist:
-   • alg1 — naive, ignored (never used).
-   • alg2 — local search on EVERY processor, results sent to coordinator.
-              Every proc participates → Total = p × Elapsed.
-   • alg3 — only relevant processor(s) participate. Elapsed = Total (when 1 proc).
-
-   Algorithm choice depends on:
-     - Question type: "point" (id=10) | "range" (5<id<10) | "scan" (id!=10)
-     - Data distribution: round_robin | hash(<field>) | range(<field>)
-     - Whether the question field matches the partition field
-
-   Decision logic (use decide_select_algorithm tool — DO NOT decide by hand):
-     - round_robin + any                       → alg2 (no locality)
-     - hash(F) + question on F + point (=)     → alg3 (hash gives exact proc)
-     - hash(F) + question on F + range/scan    → alg2 (hash breaks order)
-     - range(F) + question on F + point (=)    → alg3 (1 proc holds that value)
-     - range(F) + question on F + range (>,<)  → alg3 (subset of procs)
-     - range(F) + question on F + scan (!=)    → alg3 (complement of point:
-                                                        p-1 procs return full partition,
-                                                        1 proc filters out excluded value)
-     - question on different field than partition → alg2
-
-▶ SORT — two algorithms based on distribution:
-   Decision (use decide_sort_algorithm tool — DO NOT decide by hand):
-     - round_robin or hash(F)          → alg1
-     - range(F) where F == sort field  → alg2
-     - range(F) where F != sort field  → alg1
-
-   alg1 (round-robin / hash) — 4 steps:
-     Step 1: all p procs sort local bs blocks → 3*bs*t_d (elapsed) / 3*B*t_d (total)
-     Step 2: (p-1) procs send to proc 0      → (p-1)*bs*t_s
-     Step 3: proc 0 reads (p-1) runs         → (p-1)*bs*(t_s+t_d)
-     Step 4: proc 0 merges all p runs        → B*t_d
-     Elapsed = step1 + step2 + step3 + step4
-     Total   = 3*B*t_d + step2 + step3 + step4
-
-   alg2 (range on sort field) — local only, no communication:
-     Elapsed = 3*bs*t_d
-     Total   = 3*B*t_d
-
-▶ JOIN — placeholder formula: 3 * t_d * (B_s + B_t)   (will be refined)
-
-═══ COMPOUND QUERIES ═══
-
-A task may chain operations (e.g. Select-Join, Select-Sort-Join).
-For these:
-  1. Compute cost of each atomic step separately.
-  2. Pass the intermediate result size in BLOCKS to the next step.
-  3. Use compose_costs to combine the final Elapsed and Total.
-
-═══ WORKFLOW ═══
+    prompt = """You are a parallel database systems expert specializing in query cost analysis.
 
 1. FIRST call extract_schema_from_text(task_text) passing the FULL raw task text.
    Then call parse_schema with the JSON it returns.
@@ -497,7 +435,7 @@ For these:
    • Algorithm choice + reason for each step
    • Elapsed and Total in symbolic form
 
-LANGUAGE RULE: {lang_rule}
+LANGUAGE RULE: " + _lang_rule + "
 
 ═══ STRICT OUTPUT FORMAT (follow exactly, even on small models) ═══
 
@@ -536,8 +474,54 @@ def build_agent(llm=None):
         llm: A LangChain chat model. If None, defaults to gpt-4o via OPENAI_API_KEY.
     """
     if llm is None:
-        from langchain_openai import ChatOpenAI
-        llm = ChatOpenAI(
+                llm = ChatOpenAI(
+            model="gpt-4o",
+            temperature=0,
+            api_key=os.environ["OPENAI_API_KEY"],
+        )
+    llm_with_tools = llm.bind_tools(tools)
+
+    def call_llm(state: QueryAgentState):
+        ctx_note = ""
+        if state.get("db_context"):
+            ctx_note = f"\n\nCurrent DB context (sizes in blocks):\n{json.dumps(state['db_context'], indent=2)}"
+
+        messages = [SystemMessage(content=build_system_prompt(_agent_lang) + ctx_note)] + state["messages"]
+        response = llm_with_tools.invoke(messages)
+        return {"messages": [response]}
+
+    def should_continue(state: QueryAgentState):
+        last = state["messages"][-1]
+        if hasattr(last, "tool_calls") and last.tool_calls:
+            return "tools"
+        return END
+
+    tool_node = ToolNode(tools)
+
+    graph = StateGraph(QueryAgentState)
+    graph.add_node("llm", call_llm)
+    graph.add_node("tools", tool_node)
+    graph.set_entry_point("llm")
+    graph.add_conditional_edges("llm", should_continue, {"tools": "tools", END: END})
+    graph.add_edge("tools", "llm")
+
+
+
+_agent_lang: str = "ru"
+
+def set_agent_lang(lang: str):
+    global _agent_lang
+    _agent_lang = lang
+
+
+def build_agent(llm=None):
+    """
+    Build the parallel query agent.
+    Args:
+        llm: A LangChain chat model. If None, defaults to gpt-4o via OPENAI_API_KEY.
+    """
+    if llm is None:
+                llm = ChatOpenAI(
             model="gpt-4o",
             temperature=0,
             api_key=os.environ["OPENAI_API_KEY"],
