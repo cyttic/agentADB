@@ -153,6 +153,9 @@ async def chat(req: ChatRequest):
         response = _orchestrator.handle(req.message)
         return ChatResponse(response=response, domain=domain)
     except Exception as e:
+        import traceback
+        detail = f"{type(e).__name__}: {e}\n{traceback.format_exc()}"
+        print(detail)
         raise HTTPException(status_code=500, detail=str(e))
 
 

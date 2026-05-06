@@ -162,10 +162,10 @@ class Orchestrator:
             self.query_history.append(HumanMessage(content=user_input))
             result = self.query_agent.invoke({
                 "messages":   self.query_history,
-                "db_context": self.query_db_context,
+                "db_context": self.query_db_context or {},
             })
             self.query_history    = result["messages"]
-            self.query_db_context = result.get("db_context", self.query_db_context)
+            self.query_db_context = result.get("db_context") or self.query_db_context or {}
             last_ai = next(
                 (m for m in reversed(self.query_history) if isinstance(m, AIMessage)),
                 None,

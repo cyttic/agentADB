@@ -222,10 +222,11 @@ def build_agent(llm=None):
         llm: A LangChain chat model. If None, defaults to gpt-4o via OPENAI_API_KEY.
     """
     if llm is None:
-                llm = ChatOpenAI(
+        from langchain_openai import ChatOpenAI
+        llm = ChatOpenAI(
             model="gpt-4o",
             temperature=0,
-            api_key=os.environ["OPENAI_API_KEY"],
+            api_key=os.environ.get("OPENAI_API_KEY", ""),
         )
     llm_with_tools = llm.bind_tools(tools)
 

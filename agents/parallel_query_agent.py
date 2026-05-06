@@ -419,41 +419,34 @@ def build_system_prompt(lang: str = "ru") -> str:
     else:
         lang_rule = "Always respond in English, regardless of input language."
 
-    prompt = """You are a parallel database systems expert specializing in query cost analysis.
-
-1. FIRST call extract_schema_from_text(task_text) passing the FULL raw task text.
-   Then call parse_schema with the JSON it returns.
-   Never construct the schema JSON yourself — always use extract_schema_from_text.
-2. Identify which atomic operations the query needs and their order.
-3. For each Select:
-   a. Call decide_select_algorithm with question type + distribution.
-   b. Call select_cost with the chosen algorithm.
-4. For each Sort/Join: call sort_cost / join_cost.
-5. If multiple operations: call compose_costs to combine.
-6. Present the final answer:
-   • Relational Algebra expression
-   • Algorithm choice + reason for each step
-   • Elapsed and Total in symbolic form
-
-LANGUAGE RULE: " + _lang_rule + "
-
-═══ STRICT OUTPUT FORMAT (follow exactly, even on small models) ═══
-
-After computing costs, ALWAYS end your response with this block:
-
----
-📐 Relational Algebra:
-  <RA expression here>
-
-⚙️  Algorithm: <alg2 or alg3> — <one-line reason>
-
-⏱️  Elapsed = <symbolic expression>
-📊  Total   = <symbolic expression>
----
-
-NEVER skip this block. NEVER compute the numbers yourself — always call tools.
-If you are unsure which tool to call next, re-read the WORKFLOW section above.
-"""
+    return (
+        "You are a parallel database systems expert specializing in query cost analysis.\n\n"
+        "1. FIRST call extract_schema_from_text(task_text) passing the FULL raw task text.\n"
+        "   Then call parse_schema with the JSON it returns.\n"
+        "   Never construct the schema JSON yourself — always use extract_schema_from_text.\n"
+        "2. Identify which atomic operations the query needs and their order.\n"
+        "3. For each Select:\n"
+        "   a. Call decide_select_algorithm with question type + distribution.\n"
+        "   b. Call select_cost with the chosen algorithm.\n"
+        "4. For each Sort/Join: call sort_cost / join_cost.\n"
+        "5. If multiple operations: call compose_costs to combine.\n"
+        "6. Present the final answer:\n"
+        "   \u2022 Relational Algebra expression\n"
+        "   \u2022 Algorithm choice + reason for each step\n"
+        "   \u2022 Elapsed and Total in symbolic form\n\n"
+        f"LANGUAGE RULE: {lang_rule}\n\n"
+        "\u2550\u2550\u2550 STRICT OUTPUT FORMAT \u2550\u2550\u2550\n\n"
+        "After computing costs, ALWAYS end your response with this block:\n\n"
+        "---\n"
+        "\U0001f4d0 Relational Algebra:\n"
+        "  <RA expression here>\n\n"
+        "\u2699\ufe0f  Algorithm: <alg2 or alg3> \u2014 <one-line reason>\n\n"
+        "\u23f1\ufe0f  Elapsed = <symbolic expression>\n"
+        "\U0001f4ca  Total   = <symbolic expression>\n"
+        "---\n\n"
+        "NEVER skip this block. NEVER compute the numbers yourself \u2014 always call tools.\n"
+        "If you are unsure which tool to call next, re-read the WORKFLOW section above."
+    )
 
 
 # ══════════════════════════════════════════════════════════════
@@ -474,64 +467,19 @@ def build_agent(llm=None):
         llm: A LangChain chat model. If None, defaults to gpt-4o via OPENAI_API_KEY.
     """
     if llm is None:
-                llm = ChatOpenAI(
+        from langchain_openai import ChatOpenAI
+        llm = ChatOpenAI(
             model="gpt-4o",
             temperature=0,
-            api_key=os.environ["OPENAI_API_KEY"],
+            api_key=os.environ.get("OPENAI_API_KEY", ""),
         )
     llm_with_tools = llm.bind_tools(tools)
 
     def call_llm(state: QueryAgentState):
         ctx_note = ""
-        if state.get("db_context"):
-            ctx_note = f"\n\nCurrent DB context (sizes in blocks):\n{json.dumps(state['db_context'], indent=2)}"
-
-        messages = [SystemMessage(content=build_system_prompt(_agent_lang) + ctx_note)] + state["messages"]
-        response = llm_with_tools.invoke(messages)
-        return {"messages": [response]}
-
-    def should_continue(state: QueryAgentState):
-        last = state["messages"][-1]
-        if hasattr(last, "tool_calls") and last.tool_calls:
-            return "tools"
-        return END
-
-    tool_node = ToolNode(tools)
-
-    graph = StateGraph(QueryAgentState)
-    graph.add_node("llm", call_llm)
-    graph.add_node("tools", tool_node)
-    graph.set_entry_point("llm")
-    graph.add_conditional_edges("llm", should_continue, {"tools": "tools", END: END})
-    graph.add_edge("tools", "llm")
-
-
-
-_agent_lang: str = "ru"
-
-def set_agent_lang(lang: str):
-    global _agent_lang
-    _agent_lang = lang
-
-
-def build_agent(llm=None):
-    """
-    Build the parallel query agent.
-    Args:
-        llm: A LangChain chat model. If None, defaults to gpt-4o via OPENAI_API_KEY.
-    """
-    if llm is None:
-                llm = ChatOpenAI(
-            model="gpt-4o",
-            temperature=0,
-            api_key=os.environ["OPENAI_API_KEY"],
-        )
-    llm_with_tools = llm.bind_tools(tools)
-
-    def call_llm(state: QueryAgentState):
-        ctx_note = ""
-        if state.get("db_context"):
-            ctx_note = f"\n\nCurrent DB context (sizes in blocks):\n{json.dumps(state['db_context'], indent=2)}"
+        db_ctx = state.get("db_context") or {}
+        if db_ctx:
+            ctx_note = f"\n\nCurrent DB context (sizes in blocks):\n{json.dumps(db_ctx, indent=2)}"
 
         messages = [SystemMessage(content=build_system_prompt(_agent_lang) + ctx_note)] + state["messages"]
         response = llm_with_tools.invoke(messages)
