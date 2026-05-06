@@ -20,7 +20,7 @@ jobs:
   #
   #  Syntax check  — BLOCKING. A syntax error or undefined name
   #                  that crashes on import stops the pipeline
-  #                  before broken code reaches the server.
+  #                  before broken code reaches the server .
   # ════════════════════════════════════════════════════════════
   test:
     name: Lint & Syntax Check
