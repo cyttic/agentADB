@@ -15,12 +15,7 @@ jobs:
   #  JOB 1 — LINT & SYNTAX CHECK
   #
   #  Lint (ruff)   — warns only, never blocks the deploy.
-  #                  Style issues are printed in the Actions log
-  #                  so you can fix them when convenient.
-  #
-  #  Syntax check  — BLOCKING. A syntax error or undefined name
-  #                  that crashes on import stops the pipeline
-  #                  before broken code reaches the server .
+  #  Syntax check  — BLOCKING. Stops pipeline on syntax errors.
   # ════════════════════════════════════════════════════════════
   test:
     name: Lint & Syntax Check
@@ -55,16 +50,12 @@ jobs:
 
   # ════════════════════════════════════════════════════════════
   #  JOB 2 — BUILD & PUSH TO DOCKERHUB
-  #  (only on push to main, not on pull_request)
   # ════════════════════════════════════════════════════════════
   build-and-push:
     name: Build & Push Docker Image
     runs-on: ubuntu-latest
     needs: test
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-
-    outputs:
-      image_tag: ${{ steps.meta.outputs.version }}
 
     steps:
       - name: Checkout
@@ -108,6 +99,9 @@ jobs:
 
   # ════════════════════════════════════════════════════════════
   #  JOB 3 — DEPLOY TO AZURE VM
+  #
+  #  config.json is NOT mounted as a volume — it's baked into
+  #  the image as a default. API keys come from env vars only.
   # ════════════════════════════════════════════════════════════
   deploy:
     name: Deploy to Azure VM
@@ -140,11 +134,10 @@ jobs:
               -p 80:8000 \
               -e OPENAI_API_KEY="${{ secrets.OPENAI_API_KEY }}" \
               -e ANTHROPIC_API_KEY="${{ secrets.ANTHROPIC_API_KEY }}" \
-              -v /etc/db-assistant/config.json:/app/config.json:ro \
               ${{ env.IMAGE_NAME }}:latest
 
             echo "── Waiting for health check ──"
-            sleep 10
+            sleep 15
             curl -f http://localhost/health && echo "OK" || (docker logs db-assistant && exit 1)
 
             echo "── Pruning old images ──"
