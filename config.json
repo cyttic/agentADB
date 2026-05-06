@@ -51,5 +51,9 @@
       ],
       "_comment": "Model name is just a label here \u2014 the server decides which model it runs."
     }
+  },
+  "server": {
+    "host": "0.0.0.0",
+    "port": 8000
   }
 }

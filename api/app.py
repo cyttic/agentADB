@@ -34,6 +34,8 @@ from typing import Optional
 
 from llm_factory  import build_llm, LLMConfig, load_config
 from orchestrator import Orchestrator
+import agents.serializability_agent as _serial_mod
+import agents.parallel_query_agent  as _query_mod
 
 
 # ══════════════════════════════════════════════════════════════
@@ -162,6 +164,27 @@ async def reset():
     return {"status": "reset", "message": "Conversation history cleared"}
 
 
+_current_lang: str = "ru"
+
+class LangRequest(BaseModel):
+    lang: str   # "ru" or "en"
+
+@app.post("/language")
+async def set_language(req: LangRequest):
+    global _current_lang, _orchestrator
+    if req.lang not in ("ru", "en"):
+        raise HTTPException(status_code=400, detail="lang must be 'ru' or 'en'")
+    _current_lang = req.lang
+    # Update language in both agent modules — takes effect on next LLM call
+    _serial_mod.set_agent_lang(req.lang)
+    _query_mod.set_agent_lang(req.lang)
+    # Reset histories so agents start fresh in the new language
+    _orchestrator.serial_history   = []
+    _orchestrator.query_history    = []
+    _orchestrator.query_db_context = {}
+    return {"status": "ok", "lang": req.lang}
+
+
 # ══════════════════════════════════════════════════════════════
 #  UI  (single-page chat interface)
 # ══════════════════════════════════════════════════════════════
@@ -207,6 +230,106 @@ HTML_PAGE = """<!DOCTYPE html>
     overflow: hidden;
   }
 
+  /* ── AGREEMENT OVERLAY ── */
+  .agreement-overlay {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.85);
+    backdrop-filter: blur(8px);
+    z-index: 200;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .agreement-box {
+    background: var(--surface);
+    border: 1px solid var(--accent);
+    border-radius: 18px;
+    padding: 36px 40px;
+    max-width: 520px;
+    width: 90%;
+    animation: fadeUp 0.3s ease;
+    box-shadow: 0 0 60px rgba(59,130,246,0.15);
+  }
+  .agreement-logo {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 20px;
+  }
+  .agreement-logo-icon {
+    width: 36px; height: 36px;
+    background: linear-gradient(135deg, var(--accent), var(--purple));
+    border-radius: 9px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px;
+  }
+  .agreement-logo-text {
+    font-family: var(--mono);
+    font-weight: 700;
+    font-size: 16px;
+  }
+  .agreement-logo-text span { color: var(--accent); }
+  .agreement-box h2 {
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--accent);
+    letter-spacing: 0.4px;
+    margin-bottom: 14px;
+    text-transform: uppercase;
+  }
+  .agreement-box p {
+    font-size: 13.5px;
+    line-height: 1.7;
+    color: var(--text);
+    margin-bottom: 10px;
+  }
+  .agreement-box p.muted {
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 0;
+  }
+  .agreement-features {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 16px;
+    margin: 14px 0;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+  }
+  .agreement-feature {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    font-size: 12.5px;
+    line-height: 1.5;
+    color: var(--text);
+  }
+  .agreement-feature .dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    margin-top: 5px;
+    flex-shrink: 0;
+  }
+  .btn-agree {
+    width: 100%;
+    background: var(--accent);
+    border: none;
+    color: white;
+    border-radius: 10px;
+    padding: 13px;
+    font-family: var(--sans);
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    margin-top: 20px;
+    transition: background 0.2s, transform 0.1s;
+    letter-spacing: 0.2px;
+  }
+  .btn-agree:hover { background: #2563eb; }
+  .btn-agree:active { transform: scale(0.98); }
+
   /* ── HEADER ── */
   header {
     display: flex;
@@ -218,13 +341,11 @@ HTML_PAGE = """<!DOCTYPE html>
     background: var(--surface);
     flex-shrink: 0;
   }
-
   .logo {
     display: flex;
     align-items: center;
     gap: 10px;
   }
-
   .logo-icon {
     width: 28px; height: 28px;
     background: linear-gradient(135deg, var(--accent), var(--purple));
@@ -232,21 +353,59 @@ HTML_PAGE = """<!DOCTYPE html>
     display: flex; align-items: center; justify-content: center;
     font-size: 14px;
   }
-
   .logo-text {
     font-family: var(--mono);
     font-weight: 700;
     font-size: 14px;
     letter-spacing: -0.3px;
   }
-
   .logo-text span { color: var(--accent); }
 
   .header-right {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 10px;
   }
+
+  /* Language toggle */
+  .lang-toggle {
+    display: flex;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .lang-btn {
+    background: transparent;
+    border: none;
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 600;
+    padding: 4px 10px;
+    cursor: pointer;
+    transition: all 0.15s;
+    letter-spacing: 0.3px;
+  }
+  .lang-btn.active {
+    background: var(--accent);
+    color: white;
+  }
+
+  .github-link {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    color: var(--muted);
+    text-decoration: none;
+    font-size: 12px;
+    font-family: var(--mono);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 4px 10px;
+    transition: all 0.2s;
+  }
+  .github-link:hover { color: var(--text); border-color: var(--text); }
 
   .model-badge {
     display: flex;
@@ -297,7 +456,6 @@ HTML_PAGE = """<!DOCTYPE html>
     flex-shrink: 0;
     overflow-y: auto;
   }
-
   .sidebar-label {
     font-size: 10px;
     font-weight: 600;
@@ -306,7 +464,6 @@ HTML_PAGE = """<!DOCTYPE html>
     color: var(--muted);
     padding: 4px 8px 2px;
   }
-
   .example-btn {
     background: transparent;
     border: none;
@@ -322,23 +479,16 @@ HTML_PAGE = """<!DOCTYPE html>
     border-left: 2px solid transparent;
   }
   .example-btn:hover { background: var(--bg); border-left-color: var(--accent); }
-  .example-btn.serial { border-left-color: transparent; }
   .example-btn.serial:hover { border-left-color: var(--purple); }
+  .sidebar-divider { height: 1px; background: var(--border); margin: 6px 0; }
 
-  .sidebar-divider {
-    height: 1px;
-    background: var(--border);
-    margin: 6px 0;
-  }
-
-  /* ── CHAT AREA ── */
+  /* ── CHAT ── */
   .chat-area {
     flex: 1;
     display: flex;
     flex-direction: column;
     overflow: hidden;
   }
-
   #messages {
     flex: 1;
     overflow-y: auto;
@@ -348,24 +498,16 @@ HTML_PAGE = """<!DOCTYPE html>
     gap: 16px;
     scroll-behavior: smooth;
   }
-
   #messages::-webkit-scrollbar { width: 4px; }
   #messages::-webkit-scrollbar-track { background: transparent; }
   #messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
 
-  .msg {
-    display: flex;
-    gap: 12px;
-    animation: fadeUp 0.25s ease;
-  }
-
+  .msg { display: flex; gap: 12px; animation: fadeUp 0.25s ease; }
   @keyframes fadeUp {
     from { opacity: 0; transform: translateY(8px); }
     to   { opacity: 1; transform: translateY(0); }
   }
-
   .msg.user { flex-direction: row-reverse; }
-
   .avatar {
     width: 30px; height: 30px;
     border-radius: 8px;
@@ -374,7 +516,6 @@ HTML_PAGE = """<!DOCTYPE html>
     flex-shrink: 0;
     margin-top: 2px;
   }
-
   .msg.user .avatar  { background: var(--accent); }
   .msg.agent .avatar { background: linear-gradient(135deg, var(--accent), var(--purple)); }
 
@@ -388,7 +529,6 @@ HTML_PAGE = """<!DOCTYPE html>
     line-height: 1.65;
     white-space: pre-wrap;
   }
-
   .msg.user .bubble {
     background: var(--accent);
     border-color: var(--accent);
@@ -413,18 +553,12 @@ HTML_PAGE = """<!DOCTYPE html>
   .domain-UNKNOWN { background: rgba(100,116,139,0.15); color: var(--muted); }
 
   .thinking {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    color: var(--muted);
-    font-size: 12px;
-    font-family: var(--mono);
+    display: flex; align-items: center; gap: 6px;
+    color: var(--muted); font-size: 12px; font-family: var(--mono);
   }
   .thinking-dots span {
-    display: inline-block;
-    width: 5px; height: 5px;
-    border-radius: 50%;
-    background: var(--muted);
+    display: inline-block; width: 5px; height: 5px;
+    border-radius: 50%; background: var(--muted);
     animation: blink 1.2s infinite;
   }
   .thinking-dots span:nth-child(2) { animation-delay: 0.2s; }
@@ -444,7 +578,6 @@ HTML_PAGE = """<!DOCTYPE html>
     align-items: flex-end;
     flex-shrink: 0;
   }
-
   #input {
     flex: 1;
     background: var(--bg);
@@ -489,7 +622,6 @@ HTML_PAGE = """<!DOCTYPE html>
     align-items: center; justify-content: center;
   }
   .modal-overlay.open { display: flex; }
-
   .modal {
     background: var(--surface);
     border: 1px solid var(--border);
@@ -498,7 +630,6 @@ HTML_PAGE = """<!DOCTYPE html>
     width: 380px;
     animation: fadeUp 0.2s ease;
   }
-
   .modal h2 {
     font-family: var(--mono);
     font-size: 14px;
@@ -506,10 +637,7 @@ HTML_PAGE = """<!DOCTYPE html>
     margin-bottom: 16px;
     color: var(--accent);
   }
-
-  .form-group {
-    margin-bottom: 12px;
-  }
+  .form-group { margin-bottom: 12px; }
   .form-group label {
     display: block;
     font-size: 11px;
@@ -534,12 +662,9 @@ HTML_PAGE = """<!DOCTYPE html>
   }
   .form-group select:focus,
   .form-group input:focus { border-color: var(--accent); }
-
   .modal-actions {
-    display: flex;
-    gap: 8px;
-    margin-top: 16px;
-    justify-content: flex-end;
+    display: flex; gap: 8px;
+    margin-top: 16px; justify-content: flex-end;
   }
   .btn-cancel {
     background: transparent;
@@ -561,7 +686,6 @@ HTML_PAGE = """<!DOCTYPE html>
     cursor: pointer;
   }
 
-  /* ── WELCOME ── */
   .welcome {
     text-align: center;
     padding: 48px 24px;
@@ -578,6 +702,45 @@ HTML_PAGE = """<!DOCTYPE html>
 </head>
 <body>
 
+<!-- AGREEMENT OVERLAY -->
+<div class="agreement-overlay" id="agreement">
+  <div class="agreement-box">
+    <div class="agreement-logo">
+      <div class="agreement-logo-icon">⚙</div>
+      <div class="agreement-logo-text">DB <span>Assistant</span> Framework</div>
+    </div>
+    <h2>Welcome — Please read before continuing</h2>
+    <p>
+      This is an AI-powered framework for solving tasks from the course
+      <strong style="color:var(--accent)">Advanced Databases</strong>.
+      It is designed to assist with academic exercises — not to replace understanding.
+    </p>
+    <div class="agreement-features">
+      <div class="agreement-feature">
+        <div class="dot" style="background:var(--accent)"></div>
+        <span><strong>Parallel Query Cost Analysis</strong> — computes Elapsed and Total time for Select, Sort, and Join operations across distributed processors</span>
+      </div>
+      <div class="agreement-feature">
+        <div class="dot" style="background:var(--purple)"></div>
+        <span><strong>Schedule Serializability</strong> — checks view-serializability and conflict-serializability with full precedence graph analysis</span>
+      </div>
+      <div class="agreement-feature">
+        <div class="dot" style="background:var(--green)"></div>
+        <span><strong>Any Schema, Any Language</strong> — describe tables in Russian or English; the framework extracts the schema automatically</span>
+      </div>
+      <div class="agreement-feature">
+        <div class="dot" style="background:var(--amber)"></div>
+        <span><strong>LLM-powered</strong> — uses GPT-4o / Claude / local models; all cost formulas are computed deterministically by Python tools</span>
+      </div>
+    </div>
+    <p class="muted">
+      Results may contain errors. Always verify answers independently.
+      Built for educational purposes only.
+    </p>
+    <button class="btn-agree" onclick="acceptAgreement()">I understand — Enter the Framework</button>
+  </div>
+</div>
+
 <!-- HEADER -->
 <header>
   <div class="logo">
@@ -585,22 +748,37 @@ HTML_PAGE = """<!DOCTYPE html>
     <div class="logo-text">DB <span>Assistant</span> Framework</div>
   </div>
   <div class="header-right">
+
+    <!-- Language toggle -->
+    <div class="lang-toggle">
+      <button class="lang-btn active" id="lang-ru" onclick="setLang('ru')">RU</button>
+      <button class="lang-btn"        id="lang-en" onclick="setLang('en')">EN</button>
+    </div>
+
+    <!-- GitHub -->
+    <a class="github-link" href="https://github.com/cyttic/agentADB" target="_blank" rel="noopener">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/>
+      </svg>
+      cyttic/agentADB
+    </a>
+
     <div class="model-badge" onclick="openModal()">
       <div class="model-dot"></div>
       <span id="model-label">loading...</span>
     </div>
-    <button class="btn-reset" onclick="resetChat()">↺ Reset</button>
+    <button class="btn-reset" onclick="resetChat()" id="btn-reset">↺ Reset</button>
   </div>
 </header>
 
 <main>
   <!-- SIDEBAR -->
   <aside>
-    <div class="sidebar-label">Query Examples</div>
+    <div class="sidebar-label" id="sb-query-label">Query Examples</div>
     <button class="example-btn" onclick="send('Дана таблица Flights(fid, date, from, to, seats). fid — ключ. 10,000 блоков. 10 процессоров. Round Robin. Найти: σ_{fid = 777}(Flights).')">
       σ_{fid=777}(Flights)<br>Round Robin
     </button>
-    <button class="example-btn" onclick="send('Дана таблица Students(sid, name, grade, year). sid — ключ. 5,000 блоков. 10 процессоров. Распределение: hash(sid). Найти: σ_{sid = 42}(Students).')">
+    <button class="example-btn" onclick="send('Дана таблица Students(sid, name, grade, year). sid — ключ. 5,000 блоков. 10 процессоров. hash(sid). Найти: σ_{sid = 42}(Students).')">
       σ_{sid=42}(Students)<br>Hash(sid)
     </button>
     <button class="example-btn" onclick="send('Дана таблица Orders(oid, cid, date, amount). oid — ключ. 20,000 блоков. 10 процессоров. Range by oid. Найти: σ_{oid != 100}(Orders).')">
@@ -610,7 +788,7 @@ HTML_PAGE = """<!DOCTYPE html>
       Sort by salary<br>Round Robin
     </button>
     <div class="sidebar-divider"></div>
-    <div class="sidebar-label">Serial Examples</div>
+    <div class="sidebar-label" id="sb-serial-label">Serial Examples</div>
     <button class="example-btn serial" onclick="send('Is r1(A) w2(A) r2(B) w1(B) conflict-serializable?')">
       Conflict check<br>r1(A) w2(A) r2(B) w1(B)
     </button>
@@ -625,9 +803,9 @@ HTML_PAGE = """<!DOCTYPE html>
   <!-- CHAT -->
   <div class="chat-area">
     <div id="messages">
-      <div class="welcome">
-        <h1>DB Assistant Framework</h1>
-        <p>Ask about parallel query costs (Select, Sort, Join) or transaction schedule serializability. Pick an example from the sidebar or type your own task.</p>
+      <div class="welcome" id="welcome-msg">
+        <h1 id="welcome-title">DB Assistant Framework</h1>
+        <p id="welcome-sub">Ask about parallel query costs (Select, Sort, Join) or transaction schedule serializability. Pick an example from the sidebar or type your own task.</p>
       </div>
     </div>
     <div class="input-area">
@@ -664,8 +842,8 @@ HTML_PAGE = """<!DOCTYPE html>
       <input id="m-url" type="text" placeholder="http://127.0.0.1:9001">
     </div>
     <div class="modal-actions">
-      <button class="btn-cancel" onclick="closeModal()">Cancel</button>
-      <button class="btn-apply" onclick="applyConfig()">Apply</button>
+      <button class="btn-cancel" onclick="closeModal()" id="btn-cancel">Cancel</button>
+      <button class="btn-apply" onclick="applyConfig()" id="btn-apply">Apply</button>
     </div>
   </div>
 </div>
@@ -678,9 +856,88 @@ const MODELS = {
   local:     ['local'],
 };
 
+// ── Language ─────────────────────────────────────────────────
+let lang = localStorage.getItem('db_lang') || 'ru';
+
+const I18N = {
+  ru: {
+    reset:       '↺ Сброс',
+    placeholder: 'Введите задачу или вопрос...',
+    thinking:    'думаю...',
+    welcomeTitle:'DB Assistant Framework',
+    welcomeSub:  'Задайте вопрос о стоимости параллельных запросов (Select, Sort, Join) или о сериализуемости расписаний транзакций. Выберите пример из боковой панели или введите свою задачу.',
+    sbQuery:     'Примеры запросов',
+    sbSerial:    'Примеры расписаний',
+    cancel:      'Отмена',
+    apply:       'Применить',
+    agreeBtn:    'Понятно — Войти в Framework',
+  },
+  en: {
+    reset:       '↺ Reset',
+    placeholder: 'Type a task or question...',
+    thinking:    'thinking...',
+    welcomeTitle:'DB Assistant Framework',
+    welcomeSub:  'Ask about parallel query costs (Select, Sort, Join) or transaction schedule serializability. Pick an example from the sidebar or type your own task.',
+    sbQuery:     'Query Examples',
+    sbSerial:    'Serial Examples',
+    cancel:      'Cancel',
+    apply:       'Apply',
+    agreeBtn:    'I understand — Enter the Framework',
+  },
+};
+
+async function setLang(l) {
+  lang = l;
+  localStorage.setItem('db_lang', l);
+  document.getElementById('lang-ru').classList.toggle('active', l === 'ru');
+  document.getElementById('lang-en').classList.toggle('active', l === 'en');
+  applyLang();
+
+  // Tell the backend: change system prompt language + reset histories
+  await fetch('/language', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({lang: l}),
+  });
+
+  // Refresh the chat welcome screen in the new language
+  const msgs = document.getElementById('messages');
+  const t = I18N[l];
+  msgs.innerHTML = `
+    <div class="welcome" id="welcome-msg">
+      <h1 id="welcome-title">${t.welcomeTitle}</h1>
+      <p id="welcome-sub">${t.welcomeSub}</p>
+    </div>`;
+}
+
+function applyLang() {
+  const t = I18N[lang];
+  document.getElementById('btn-reset').textContent    = t.reset;
+  document.getElementById('input').placeholder        = t.placeholder;
+  document.getElementById('welcome-title').textContent = t.welcomeTitle;
+  document.getElementById('welcome-sub').textContent   = t.welcomeSub;
+  document.getElementById('sb-query-label').textContent  = t.sbQuery;
+  document.getElementById('sb-serial-label').textContent = t.sbSerial;
+  document.getElementById('btn-cancel').textContent    = t.cancel;
+  document.getElementById('btn-apply').textContent     = t.apply;
+  document.getElementById('btn-agree').textContent     = t.agreeBtn;
+}
+
+// ── Agreement ─────────────────────────────────────────────────
+function acceptAgreement() {
+  document.getElementById('agreement').style.display = 'none';
+  sessionStorage.setItem('agreed', '1');
+}
+
+function checkAgreement() {
+  if (!sessionStorage.getItem('agreed')) {
+    document.getElementById('agreement').style.display = 'flex';
+  }
+}
+
+// ── Config ────────────────────────────────────────────────────
 let isLoading = false;
 
-// ── load current config ──────────────────────────────────────
 async function loadConfig() {
   try {
     const r = await fetch('/config');
@@ -691,14 +948,13 @@ async function loadConfig() {
   }
 }
 
-// ── send message ─────────────────────────────────────────────
+// ── Send ──────────────────────────────────────────────────────
 async function sendMessage() {
   const input = document.getElementById('input');
   const text  = input.value.trim();
   if (!text || isLoading) return;
 
-  // Clear welcome
-  const msgs = document.getElementById('messages');
+  const msgs    = document.getElementById('messages');
   const welcome = msgs.querySelector('.welcome');
   if (welcome) welcome.remove();
 
@@ -718,11 +974,8 @@ async function sendMessage() {
     });
     const d = await r.json();
     removeThinking(thinkId);
-    if (r.ok) {
-      appendMsg('agent', d.response, d.domain);
-    } else {
-      appendMsg('agent', `Error: ${d.detail}`, 'UNKNOWN');
-    }
+    if (r.ok) appendMsg('agent', d.response, d.domain);
+    else      appendMsg('agent', `Error: ${d.detail}`, 'UNKNOWN');
   } catch(e) {
     removeThinking(thinkId);
     appendMsg('agent', `Connection error: ${e.message}`, 'UNKNOWN');
@@ -747,7 +1000,7 @@ function autoResize(el) {
   el.style.height = Math.min(el.scrollHeight, 140) + 'px';
 }
 
-// ── messages ─────────────────────────────────────────────────
+// ── Messages ──────────────────────────────────────────────────
 function appendMsg(role, text, domain) {
   const msgs = document.getElementById('messages');
   const div  = document.createElement('div');
@@ -775,13 +1028,13 @@ function appendMsg(role, text, domain) {
   div.appendChild(bubble);
   msgs.appendChild(div);
   msgs.scrollTop = msgs.scrollHeight;
-  return div;
 }
 
 let thinkCounter = 0;
 function appendThinking() {
   const id   = ++thinkCounter;
   const msgs = document.getElementById('messages');
+  const t    = I18N[lang].thinking;
   const div  = document.createElement('div');
   div.className = 'msg agent';
   div.id = `think-${id}`;
@@ -790,7 +1043,7 @@ function appendThinking() {
     <div class="bubble">
       <div class="thinking">
         <div class="thinking-dots"><span></span><span></span><span></span></div>
-        thinking...
+        ${t}
       </div>
     </div>`;
   msgs.appendChild(div);
@@ -803,19 +1056,20 @@ function removeThinking(id) {
   if (el) el.remove();
 }
 
-// ── reset ────────────────────────────────────────────────────
+// ── Reset ─────────────────────────────────────────────────────
 async function resetChat() {
   await fetch('/reset', {method: 'POST'});
   const msgs = document.getElementById('messages');
+  const t    = I18N[lang];
   msgs.innerHTML = `
-    <div class="welcome">
-      <h1>DB Assistant Framework</h1>
-      <p>Conversation reset. Ask about parallel query costs or schedule serializability.</p>
+    <div class="welcome" id="welcome-msg">
+      <h1 id="welcome-title">${t.welcomeTitle}</h1>
+      <p id="welcome-sub">Conversation reset. ${t.welcomeSub}</p>
     </div>`;
 }
 
-// ── model modal ──────────────────────────────────────────────
-function openModal() { document.getElementById('modal').classList.add('open'); }
+// ── Model Modal ───────────────────────────────────────────────
+function openModal()  { document.getElementById('modal').classList.add('open'); }
 function closeModal() { document.getElementById('modal').classList.remove('open'); }
 
 function updateModelList() {
@@ -830,31 +1084,29 @@ async function applyConfig() {
   const provider = document.getElementById('m-provider').value;
   const model    = document.getElementById('m-model').value;
   const base_url = document.getElementById('m-url').value || null;
-
   const r = await fetch('/config', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({provider, model, base_url}),
   });
-
   if (r.ok) {
     closeModal();
     loadConfig();
-    document.getElementById('model-label').textContent = `${provider} / ${model}`;
   } else {
     const d = await r.json();
     alert(`Error: ${d.detail}`);
   }
 }
 
-// close modal on overlay click
 document.getElementById('modal').addEventListener('click', function(e) {
   if (e.target === this) closeModal();
 });
 
-// init
+// ── Init ──────────────────────────────────────────────────────
 updateModelList();
 loadConfig();
+applyLang();
+checkAgreement();
 </script>
 </body>
 </html>

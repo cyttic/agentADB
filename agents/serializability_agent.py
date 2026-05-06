@@ -165,7 +165,9 @@ def check_conflict_serializability(schedule: list[list]) -> str:
 
 tools = [parse_schedule_from_text, check_view_serializability, check_conflict_serializability]
 
-SYSTEM_PROMPT = """You are a database systems expert specializing in transaction schedule analysis.
+def build_system_prompt(lang: str = "ru") -> str:
+    lang_rule = "Always respond in Russian, regardless of input language." if lang == "ru" else "Always respond in English, regardless of input language."
+    return """You are a database systems expert specializing in transaction schedule analysis.
 
 You have three tools:
 1. parse_schedule_from_text    — parses raw text schedules (use first if input is text)
@@ -179,7 +181,7 @@ When a user gives you a schedule task:
 3. Call the appropriate tool.
 4. Explain the result clearly: verdict, reason, graph edges, serial order or cycle.
 
-LANGUAGE RULE: Always respond in Russian, regardless of input language.
+LANGUAGE RULE: {lang_rule}
 
 ═══ STRICT OUTPUT FORMAT (follow exactly, even on small models) ═══
 
@@ -209,6 +211,13 @@ class SerialAgentState(TypedDict):
 #  BUILD AGENT
 # ══════════════════════════════════════════════════════════════
 
+_agent_lang: str = "ru"
+
+def set_agent_lang(lang: str):
+    global _agent_lang
+    _agent_lang = lang
+
+
 def build_agent(llm=None):
     """
     Build the serializability agent.
@@ -225,7 +234,7 @@ def build_agent(llm=None):
     llm_with_tools = llm.bind_tools(tools)
 
     def call_llm(state: SerialAgentState):
-        messages = [SystemMessage(content=SYSTEM_PROMPT)] + state["messages"]
+        messages = [SystemMessage(content=build_system_prompt(_agent_lang))] + state["messages"]
         response = llm_with_tools.invoke(messages)
         return {"messages": [response]}
 

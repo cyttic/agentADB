@@ -414,7 +414,9 @@ tools = [
 #  SYSTEM PROMPT  (decision logic for the agent)
 # ══════════════════════════════════════════════════════════════
 
-SYSTEM_PROMPT = """You are a parallel database systems expert specializing in query cost analysis.
+def build_system_prompt(lang: str = "ru") -> str:
+    lang_rule = "Always respond in Russian, regardless of input language." if lang == "ru" else "Always respond in English, regardless of input language."
+    return """You are a parallel database systems expert specializing in query cost analysis.
 
 ═══ CORE PRINCIPLES ═══
 
@@ -495,7 +497,7 @@ For these:
    • Algorithm choice + reason for each step
    • Elapsed and Total in symbolic form
 
-LANGUAGE RULE: Always respond in Russian, regardless of input language.
+LANGUAGE RULE: {lang_rule}
 
 ═══ STRICT OUTPUT FORMAT (follow exactly, even on small models) ═══
 
@@ -520,6 +522,13 @@ If you are unsure which tool to call next, re-read the WORKFLOW section above.
 #  BUILD AGENT
 # ══════════════════════════════════════════════════════════════
 
+_agent_lang: str = "ru"
+
+def set_agent_lang(lang: str):
+    global _agent_lang
+    _agent_lang = lang
+
+
 def build_agent(llm=None):
     """
     Build the parallel query agent.
@@ -540,7 +549,7 @@ def build_agent(llm=None):
         if state.get("db_context"):
             ctx_note = f"\n\nCurrent DB context (sizes in blocks):\n{json.dumps(state['db_context'], indent=2)}"
 
-        messages = [SystemMessage(content=SYSTEM_PROMPT + ctx_note)] + state["messages"]
+        messages = [SystemMessage(content=build_system_prompt(_agent_lang) + ctx_note)] + state["messages"]
         response = llm_with_tools.invoke(messages)
         return {"messages": [response]}
 
