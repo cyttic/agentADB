@@ -131,9 +131,19 @@ def check_view_serializability(schedule: list[list]) -> str:
         JSON string with verdict and analysis.
     """
     try:
+        import io, sys
         parsed = _parse_schedule(schedule)
+        buf = io.StringIO()
+        old_stdout = sys.stdout
+        sys.stdout = buf
         view_print_report(parsed)
-        return json.dumps('Correct', indent=2)
+        sys.stdout = old_stdout
+        output = buf.getvalue()
+        # Strip ANSI codes so LLM sees clean text
+        import re
+        output = re.compile(chr(27) + r'\[[0-9;]*m').sub('', output)
+        print(output)  # still print to terminal
+        return json.dumps({"analysis": output}, indent=2)
     except Exception as e:
         return json.dumps({"error": str(e)})
 
@@ -153,9 +163,18 @@ def check_conflict_serializability(schedule: list[list]) -> str:
         JSON string with verdict and analysis.
     """
     try:
+        import io, sys
         parsed = _parse_schedule(schedule)
+        buf = io.StringIO()
+        old_stdout = sys.stdout
+        sys.stdout = buf
         conflict_analyze(parsed)
-        return json.dumps('Correct', indent=2)
+        sys.stdout = old_stdout
+        output = buf.getvalue()
+        import re
+        output = re.compile(chr(27) + r'\[[0-9;]*m').sub('', output)
+        print(output)  # still print to terminal
+        return json.dumps({"analysis": output}, indent=2)
     except Exception as e:
         return json.dumps({"error": str(e)})
 
@@ -176,7 +195,9 @@ When a user gives you a schedule task:
    If unclear, default to view-serializability.
 2. Parse the schedule into [['r'|'w', tid, object], ...] format.
 3. Call the appropriate tool.
-4. Explain the result clearly: verdict, reason, graph edges, serial order or cycle.
+4. The tool returns a JSON with an "analysis" field containing the full detailed report.
+   REPRODUCE THIS ANALYSIS VERBATIM in your response — do not summarise it.
+   Then add your own explanation below it.
 
 LANGUAGE RULE: {_lang_rule}
 
