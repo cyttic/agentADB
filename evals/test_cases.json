@@ -54,5 +54,11 @@
       "answer": "Algorithm 2. E = 3*10 ^3 td , T = 3*10 ^3 td * 10",
       "difficulty": "low"
     }
+    {
+      "id":10,
+      "task": "Даны таблицы Flowers(name, petal, size, color), size = 10^4 blocks и Sales(name, cname, amount, price), size = 10^6 blocks. 10 processors. Задача: выполнить Flowers Join Sales",
+      "answer" : "E = (10^3 + 10^5)*(td+ ts) + (10^3 + 10^5)*(td+ ts) + (10^3 + 10^5)*ts",
+      "difficulty" : "low"
+    }
   ]
 }
