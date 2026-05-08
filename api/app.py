@@ -552,6 +552,7 @@ HTML_PAGE = """<!DOCTYPE html>
   }
   .domain-SERIAL  { background: rgba(139,92,246,0.15); color: var(--purple); }
   .domain-QUERY   { background: rgba(59,130,246,0.15); color: var(--accent); }
+  .domain-JOIN    { background: rgba(34,197,94,0.15);  color: var(--green); }
   .domain-UNKNOWN { background: rgba(100,116,139,0.15); color: var(--muted); }
 
   .thinking {
@@ -790,6 +791,11 @@ HTML_PAGE = """<!DOCTYPE html>
       Sort by salary<br>Round Robin
     </button>
     <div class="sidebar-divider"></div>
+    <div class="sidebar-label" id="sb-join-label">Join Examples</div>
+    <button class="example-btn" onclick="send('Даны таблицы Flowers(name, petal, size, color), size = 10^4 blocks и Sales(name, cname, amount, price), size = 10^6 blocks. 10 processors. Задача: выполнить Flowers Join Sales')">
+      Flowers Join Sales<br>10^4 + 10^6 blocks
+    </button>
+    <div class="sidebar-divider"></div>
     <div class="sidebar-label" id="sb-serial-label">Serial Examples</div>
     <button class="example-btn serial" onclick="send('Is r1(A) w2(A) r2(B) w1(B) conflict-serializable?')">
       Conflict check<br>r1(A) w2(A) r2(B) w1(B)
@@ -869,6 +875,7 @@ const I18N = {
     welcomeTitle:'DB Assistant Framework',
     welcomeSub:  'Задайте вопрос о стоимости параллельных запросов (Select, Sort, Join) или о сериализуемости расписаний транзакций. Выберите пример из боковой панели или введите свою задачу.',
     sbQuery:     'Примеры запросов',
+    sbJoin:      'Примеры Join',
     sbSerial:    'Примеры расписаний',
     cancel:      'Отмена',
     apply:       'Применить',
@@ -881,6 +888,7 @@ const I18N = {
     welcomeTitle:'DB Assistant Framework',
     welcomeSub:  'Ask about parallel query costs (Select, Sort, Join) or transaction schedule serializability. Pick an example from the sidebar or type your own task.',
     sbQuery:     'Query Examples',
+    sbJoin:      'Join Examples',
     sbSerial:    'Serial Examples',
     cancel:      'Cancel',
     apply:       'Apply',
@@ -919,6 +927,7 @@ function applyLang() {
   document.getElementById('welcome-title').textContent = t.welcomeTitle;
   document.getElementById('welcome-sub').textContent   = t.welcomeSub;
   document.getElementById('sb-query-label').textContent  = t.sbQuery;
+  document.getElementById('sb-join-label').textContent   = t.sbJoin;
   document.getElementById('sb-serial-label').textContent = t.sbSerial;
   document.getElementById('btn-cancel').textContent    = t.cancel;
   document.getElementById('btn-apply').textContent     = t.apply;

@@ -32,6 +32,17 @@ def records_to_blocks(record_count, record_size_bytes, block_size):
     return math.ceil(record_count / records_per_block)
 
 
+def _fmt(n: int) -> str:
+    """Format an integer as 10^k when it is an exact power of 10 (k >= 2), else as plain digits."""
+    if n <= 0:
+        return str(n)
+    log = math.log10(n)
+    k = round(log)
+    if k >= 2 and abs(log - k) < 1e-9:
+        return f"10^{k}"
+    return str(n)
+
+
 # ══════════════════════════════════════════════════════════════
 #  PARSE SCHEMA
 # ══════════════════════════════════════════════════════════════
@@ -477,26 +488,30 @@ def parallel_join_cost(blocks_a, blocks_b, num_processors, name_a="A", name_b="B
     bs_a = math.ceil(blocks_a / p)
     bs_b = math.ceil(blocks_b / p)
 
-    sum_str = f"{bs_a} + {bs_b}"
+    # Use 10^k notation for clean powers of 10
+    bs_a_s = _fmt(bs_a)
+    bs_b_s = _fmt(bs_b)
+    p_s    = _fmt(p)
+    sum_str = f"{bs_a_s} + {bs_b_s}"
 
     step1 = f"({sum_str}) * (t_s + t_d)"
     step2 = f"({sum_str}) * (t_s + t_d)"
     step3 = f"({sum_str}) * 3 * t_d"
 
     elapsed = f"({step1}) + ({step2}) + ({step3})"
-    total   = f"{p} * ({elapsed})"
+    total   = f"{p_s} * ({elapsed})"
 
     explanation = "\n".join([
-        f"Parallel Join: {name_a} ⋈ {name_b}",
-        f"  {name_a}: {blocks_a} blocks → {bs_a} blocks/server  (ceil({blocks_a}/{p}))",
-        f"  {name_b}: {blocks_b} blocks → {bs_b} blocks/server  (ceil({blocks_b}/{p}))",
-        f"  p = {p} servers",
+        f"Parallel Join: {name_a} * {name_b}",
+        f"  {name_a}: {_fmt(blocks_a)} blocks -> {bs_a_s} blocks/server  (ceil({_fmt(blocks_a)}/{p_s}))",
+        f"  {name_b}: {_fmt(blocks_b)} blocks -> {bs_b_s} blocks/server  (ceil({_fmt(blocks_b)}/{p_s}))",
+        f"  p = {p_s} servers",
         f"",
-        f"  Step 1 [send]    — each server sends its partition to all others:",
+        f"  Step 1 [send]    -- each server sends its partition to all others:",
         f"    {step1}",
-        f"  Step 2 [receive] — each server receives partitions from all others:",
+        f"  Step 2 [receive] -- each server receives partitions from all others:",
         f"    {step2}",
-        f"  Step 3 [join]    — each server performs local Join:",
+        f"  Step 3 [join]    -- each server performs local Join:",
         f"    {step3}",
         f"",
         f"  Elapsed = {elapsed}",

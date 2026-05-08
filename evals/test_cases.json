@@ -53,7 +53,7 @@
       "task": "Дана таблица Flowers(name, petal, size, color). name — ключ. Размер таблицы: 1,000,000 кортежей (или 10,000 блоков). Системные параметры: parallel, shared-nothing, 10 процессоров. Распределение данных: Range(size). Выполнить: сортировку{size}(Flights).",
       "answer": "Algorithm 2. E = 3*10 ^3 td , T = 3*10 ^3 td * 10",
       "difficulty": "low"
-    }
+    },
     {
       "id":10,
       "task": "Даны таблицы Flowers(name, petal, size, color), size = 10^4 blocks и Sales(name, cname, amount, price), size = 10^6 blocks. 10 processors. Задача: выполнить Flowers Join Sales",
