@@ -429,7 +429,7 @@ def sort_cost(block_count, num_processors, algorithm):
 
 
 # ══════════════════════════════════════════════════════════════
-#  JOIN  (placeholder — refine later)
+#  JOIN  (placeholder kept for ParallelQueryAgent compatibility)
 # ══════════════════════════════════════════════════════════════
 
 def join_cost(blocks_s, blocks_t):
@@ -443,6 +443,100 @@ def join_cost(blocks_s, blocks_t):
         "elapsed":     elapsed,
         "total":       total,
         "explanation": f"Join: 3 * t_d * (B_s + B_t) = 3 * t_d * ({blocks_s} + {blocks_t}) (placeholder, will be refined).",
+    }
+
+
+# ══════════════════════════════════════════════════════════════
+#  PARALLEL JOIN  (broadcast algorithm — JoinCostAgent)
+# ══════════════════════════════════════════════════════════════
+#
+# Each of p servers holds a local partition of every input table.
+#
+#   bs_R = ceil(B_R / p)   blocks of R per server
+#   bs_S = ceil(B_S / p)   blocks of S per server
+#
+#   Step 1 [send]    — every server sends its partition to all others:
+#                      (bs_R + bs_S) * (t_s + t_d)
+#   Step 2 [receive] — every server receives partitions from all others:
+#                      (bs_R + bs_S) * (t_s + t_d)
+#   Step 3 [join]    — every server performs a local Join:
+#                      (bs_R + bs_S) * 3 * t_d
+#
+#   Elapsed = Step1 + Step2 + Step3
+#   Total   = p * Elapsed
+
+def parallel_join_cost(blocks_a, blocks_b, num_processors, name_a="A", name_b="B"):
+    """
+    Compute Elapsed and Total cost for a parallel Join using the broadcast algorithm.
+
+    Output is symbolic — never simplified to a single number.
+    """
+    print(f"[TOOL] parallel_join_cost({name_a}={blocks_a}, {name_b}={blocks_b}, p={num_processors})")
+
+    p    = num_processors
+    bs_a = math.ceil(blocks_a / p)
+    bs_b = math.ceil(blocks_b / p)
+
+    sum_str = f"{bs_a} + {bs_b}"
+
+    step1 = f"({sum_str}) * (t_s + t_d)"
+    step2 = f"({sum_str}) * (t_s + t_d)"
+    step3 = f"({sum_str}) * 3 * t_d"
+
+    elapsed = f"({step1}) + ({step2}) + ({step3})"
+    total   = f"{p} * ({elapsed})"
+
+    explanation = "\n".join([
+        f"Parallel Join: {name_a} ⋈ {name_b}",
+        f"  {name_a}: {blocks_a} blocks → {bs_a} blocks/server  (ceil({blocks_a}/{p}))",
+        f"  {name_b}: {blocks_b} blocks → {bs_b} blocks/server  (ceil({blocks_b}/{p}))",
+        f"  p = {p} servers",
+        f"",
+        f"  Step 1 [send]    — each server sends its partition to all others:",
+        f"    {step1}",
+        f"  Step 2 [receive] — each server receives partitions from all others:",
+        f"    {step2}",
+        f"  Step 3 [join]    — each server performs local Join:",
+        f"    {step3}",
+        f"",
+        f"  Elapsed = {elapsed}",
+        f"  Total   = {total}",
+    ])
+
+    return {
+        "operation":         "join",
+        "table_a":           name_a,
+        "table_b":           name_b,
+        "blocks_a":          blocks_a,
+        "blocks_b":          blocks_b,
+        "blocks_per_proc_a": bs_a,
+        "blocks_per_proc_b": bs_b,
+        "num_processors":    p,
+        "step1":             step1,
+        "step2":             step2,
+        "step3":             step3,
+        "elapsed":           elapsed,
+        "total":             total,
+        "explanation":       explanation,
+    }
+
+
+def apply_selectivity(blocks, selectivity_fraction):
+    """
+    Reduce a table's block count by a selectivity fraction.
+
+    selectivity_fraction: float 0.0–1.0  (e.g. 0.01 = 1 % of tuples match).
+    Returns the number of blocks remaining after the Select filter (minimum 1).
+    """
+    print(f"[TOOL] apply_selectivity(blocks={blocks}, sel={selectivity_fraction})")
+    result = max(1, math.ceil(blocks * selectivity_fraction))
+    return {
+        "original_blocks":  blocks,
+        "selectivity":      selectivity_fraction,
+        "result_blocks":    result,
+        "explanation": (
+            f"After Select filter: ceil({blocks} × {selectivity_fraction}) = {result} blocks"
+        ),
     }
 
 

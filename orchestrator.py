@@ -3,7 +3,8 @@ orchestrator.py
 ================
 Routes user input to the correct agent:
   - SerializabilityAgent — schedule conflict/view serializability
-  - ParallelQueryAgent   — parallel DB query cost analysis
+  - ParallelQueryAgent   — parallel DB query cost analysis (Select, Sort)
+  - JoinCostAgent        — parallel Join cost analysis (broadcast algorithm)
 
 The LLM used by all agents is configured once at startup via llm_factory.
 """
@@ -13,6 +14,7 @@ from langchain_core.messages import HumanMessage, AIMessage
 
 from agents.serializability_agent import build_agent as build_serial_agent
 from agents.parallel_query_agent  import build_agent as build_query_agent
+from agents.join_cost_agent       import build_agent as build_join_agent
 from llm_factory                  import build_llm, LLMConfig
 
 
@@ -26,11 +28,12 @@ from llm_factory                  import build_llm, LLMConfig
 
 ROUTER_PROMPT = """Your task: read the user message and output exactly one word.
 
-The word must be one of: SERIAL, QUERY, UNKNOWN
+The word must be one of: SERIAL, QUERY, JOIN, UNKNOWN
 
 Rules:
 - Output SERIAL if the message is about transaction schedules, read/write operations, serializability, precedence graphs, or conflict analysis.
-- Output QUERY if the message is about parallel databases, processors, block size, query cost, round-robin, hash partitioning, range partitioning, relational algebra, or table scan cost.
+- Output JOIN if the message is about computing the cost of a Join (⋈) operation in a parallel database — possibly combined with Select (σ) before the join, or joining more than two tables.
+- Output QUERY if the message is about parallel databases, processors, block size, query cost, round-robin, hash partitioning, range partitioning, relational algebra, or table scan / sort cost (but NOT primarily Join).
 - Output UNKNOWN if it is neither.
 
 Do NOT explain. Do NOT add punctuation. Output only the single word.
@@ -52,8 +55,20 @@ Answer: QUERY
 Message: "10 processors, block size 2000, Customers 10^6 rows — query cost?"
 Answer: QUERY
 
-Message: "Find all customers who ordered products over 100, Orders distributed by hash(pid)"
+Message: "Find all customers ordered by date, Orders distributed by hash(pid), sort cost?"
 Answer: QUERY
+
+Message: "Flowers(name,petal,size,color) 10^4 blocks, Sales(name,cname,amount,price) 10^6 blocks, 10 servers. Perform Flowers join Sales."
+Answer: JOIN
+
+Message: "Employees 50000 blocks, Departments 1000 blocks, 8 processors. Compute join cost Employees ⋈ Departments."
+Answer: JOIN
+
+Message: "σ_price>100(Sales) ⋈ Flowers — вычислить стоимость на 10 серверах."
+Answer: JOIN
+
+Message: "Calculate cost: A ⋈ B ⋈ C, 12 processors, A=10^4 blocks, B=10^6 blocks, C=500 blocks."
+Answer: JOIN
 
 Message: "What is the weather today?"
 Answer: UNKNOWN
@@ -85,7 +100,7 @@ RED    = "\033[31m"
 #    instead of doing a strict equality check
 # ══════════════════════════════════════════════════════════════
 
-_VALID = {"SERIAL", "QUERY", "UNKNOWN"}
+_VALID = {"SERIAL", "QUERY", "JOIN", "UNKNOWN"}
 
 def _extract_domain(raw: str) -> str:
     """
@@ -116,9 +131,11 @@ class Orchestrator:
 
         self.serial_agent = build_serial_agent(llm=self.llm)
         self.query_agent  = build_query_agent(llm=self.llm)
+        self.join_agent   = build_join_agent(llm=self.llm)
 
         self.serial_history:   list = []
         self.query_history:    list = []
+        self.join_history:     list = []
         self.query_db_context: dict = {}
 
     def _route(self, user_input: str) -> str:
@@ -172,10 +189,21 @@ class Orchestrator:
             )
             return last_ai.content if last_ai else "(no response)"
 
+        elif domain == "JOIN":
+            self.join_history.append(HumanMessage(content=user_input))
+            result = self.join_agent.invoke({"messages": self.join_history})
+            self.join_history = result["messages"]
+            last_ai = next(
+                (m for m in reversed(self.join_history) if isinstance(m, AIMessage)),
+                None,
+            )
+            return last_ai.content if last_ai else "(no response)"
+
         else:
             return (
-                "Я специализируюсь на двух темах:\n"
+                "Я специализируюсь на трёх темах:\n"
                 "  • Сериализуемость расписаний транзакций\n"
-                "  • Стоимость параллельных запросов в БД\n"
+                "  • Стоимость параллельных запросов (Select, Sort)\n"
+                "  • Стоимость параллельного Join\n"
                 "Пожалуйста, уточните ваш вопрос."
             )

@@ -24,7 +24,7 @@ def run():
     print(f"\n{BOLD}{CYAN}═══════════════════════════════════════════════{RESET}")
     print(f"{BOLD}{CYAN}   Parallel DB & Serializability Assistant     {RESET}")
     print(f"{BOLD}{CYAN}═══════════════════════════════════════════════{RESET}")
-    print(f"{DIM}   Two agents · One orchestrator · LangGraph   {RESET}")
+    print(f"{DIM}  Three agents · One orchestrator · LangGraph  {RESET}")
 
     # ── Step 1: choose LLM ───────────────────────────────────
     # NOTE: model quality matters — weaker models (e.g. gpt-3.5, phi3)
@@ -40,6 +40,7 @@ def run():
     print("Example queries:")
     print("  • Is r1(A) w2(A) r2(B) w1(B) conflict-serializable?")
     print("  • Дана таблица Flights, 10000 блоков, round-robin, 10 прocs. σ_fid=777(Flights)")
+    print("  • Flowers(name,petal,size,color) 10^4 блоков, Sales(name,cname,amount,price) 10^6 блоков, 10 серверов. Выполнить Flowers join Sales.")
     print()
 
     while True:
