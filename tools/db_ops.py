@@ -458,13 +458,22 @@ def join_cost(blocks_s, blocks_t):
 
 
 # ══════════════════════════════════════════════════════════════
-#  PARALLEL JOIN  (broadcast algorithm — JoinCostAgent)
+#  PARALLEL JOIN  (JoinCostAgent)
 # ══════════════════════════════════════════════════════════════
 #
-# Each of p servers holds a local partition of every input table.
+# TWO algorithms depending on data distribution:
 #
-#   bs_R = ceil(B_R / p)   blocks of R per server
-#   bs_S = ceil(B_S / p)   blocks of S per server
+# ── Algorithm 1: LOCAL JOIN (co-located data) ──────────────────
+#   Condition: both tables are partitioned by the same method
+#   (both hash or both range) on the exact join field.
+#   Matching tuples are guaranteed to reside on the same server
+#   → no communication needed, every server joins locally.
+#
+#   Elapsed = 3 * (bs_R + bs_S) * t_d
+#   Total   = p * Elapsed
+#
+# ── Algorithm 2: BROADCAST JOIN (default) ─────────────────────
+#   Used when distributions differ or partition field != join field.
 #
 #   Step 1 [send]    — every server sends its partition to all others:
 #                      (bs_R + bs_S) * (t_s + t_d)
@@ -476,64 +485,143 @@ def join_cost(blocks_s, blocks_t):
 #   Elapsed = Step1 + Step2 + Step3
 #   Total   = p * Elapsed
 
-def parallel_join_cost(blocks_a, blocks_b, num_processors, name_a="A", name_b="B"):
+
+def _dist_info(dist: str):
+    """Parse 'hash(field)' / 'range(field)' → (method, field). Returns (dist, None) otherwise."""
+    d = dist.strip().lower()
+    if d.startswith("hash(") and d.endswith(")"):
+        return "hash", d[5:-1].strip()
+    if d.startswith("range(") and d.endswith(")"):
+        return "range", d[6:-1].strip()
+    return d, None
+
+
+def parallel_join_cost(
+    blocks_a, blocks_b, num_processors,
+    name_a="A", name_b="B",
+    distribution_a="round_robin", distribution_b="round_robin",
+    join_field="",
+):
     """
-    Compute Elapsed and Total cost for a parallel Join using the broadcast algorithm.
+    Compute Elapsed and Total cost for a parallel Join.
+
+    Chooses the algorithm automatically based on data distribution:
+      - LOCAL JOIN:     both tables partitioned by the same method (hash/range)
+                        on exactly the join_field  →  no communication needed.
+      - BROADCAST JOIN: any other case  →  3-step broadcast algorithm.
+
+    Args:
+        blocks_a / blocks_b:    Total block counts of the two input tables.
+        num_processors:         Number of parallel servers (p).
+        name_a / name_b:        Human-readable table names.
+        distribution_a/b:       Partition scheme, e.g. "hash(name)", "range(id)", "round_robin".
+        join_field:             The field the Join is performed on (e.g. "name").
 
     Output is symbolic — never simplified to a single number.
     """
-    print(f"[TOOL] parallel_join_cost({name_a}={blocks_a}, {name_b}={blocks_b}, p={num_processors})")
+    print(f"[TOOL] parallel_join_cost({name_a}={blocks_a}, {name_b}={blocks_b}, p={num_processors}, "
+          f"dist_a='{distribution_a}', dist_b='{distribution_b}', join_field='{join_field}')")
 
     p    = num_processors
     bs_a = math.ceil(blocks_a / p)
     bs_b = math.ceil(blocks_b / p)
 
-    # Use 10^k notation for clean powers of 10
-    bs_a_s = _fmt(bs_a)
-    bs_b_s = _fmt(bs_b)
-    p_s    = _fmt(p)
+    bs_a_s  = _fmt(bs_a)
+    bs_b_s  = _fmt(bs_b)
+    p_s     = _fmt(p)
     sum_str = f"{bs_a_s} + {bs_b_s}"
 
-    step1 = f"({sum_str}) * (t_s + t_d)"
-    step2 = f"({sum_str}) * (t_s + t_d)"
-    step3 = f"({sum_str}) * 3 * t_d"
+    # ── Decide algorithm ─────────────────────────────────────────
+    method_a, field_a = _dist_info(distribution_a)
+    method_b, field_b = _dist_info(distribution_b)
 
-    elapsed = f"({step1}) + ({step2}) + ({step3})"
-    total   = f"{p_s} * ({elapsed})"
+    colocated = (
+        method_a == method_b                        # same partition type
+        and field_a is not None
+        and field_a == field_b                       # same partition field
+        and join_field.strip().lower() == field_a    # partition field == join field
+    )
 
-    explanation = "\n".join([
-        f"Parallel Join: {name_a} * {name_b}",
-        f"  {name_a}: {_fmt(blocks_a)} blocks -> {bs_a_s} blocks/server  (ceil({_fmt(blocks_a)}/{p_s}))",
-        f"  {name_b}: {_fmt(blocks_b)} blocks -> {bs_b_s} blocks/server  (ceil({_fmt(blocks_b)}/{p_s}))",
-        f"  p = {p_s} servers",
-        f"",
-        f"  Step 1 [send]    -- each server sends its partition to all others:",
-        f"    {step1}",
-        f"  Step 2 [receive] -- each server receives partitions from all others:",
-        f"    {step2}",
-        f"  Step 3 [join]    -- each server performs local Join:",
-        f"    {step3}",
-        f"",
-        f"  Elapsed = {elapsed}",
-        f"  Total   = {total}",
-    ])
+    if colocated:
+        # ── Algorithm 1: LOCAL JOIN ──────────────────────────────
+        elapsed = f"3 * ({sum_str}) * t_d"
+        total   = f"{p_s} * ({elapsed})"
 
-    return {
-        "operation":         "join",
-        "table_a":           name_a,
-        "table_b":           name_b,
-        "blocks_a":          blocks_a,
-        "blocks_b":          blocks_b,
-        "blocks_per_proc_a": bs_a,
-        "blocks_per_proc_b": bs_b,
-        "num_processors":    p,
-        "step1":             step1,
-        "step2":             step2,
-        "step3":             step3,
-        "elapsed":           elapsed,
-        "total":             total,
-        "explanation":       explanation,
-    }
+        explanation = "\n".join([
+            f"Join: {name_a} * {name_b}  [LOCAL JOIN -- co-located data]",
+            f"  Both tables partitioned by {distribution_a} on join field '{join_field}'",
+            f"  Matching tuples are on the same server -- no communication needed.",
+            f"",
+            f"  {name_a}: {_fmt(blocks_a)} blocks -> {bs_a_s} blocks/server",
+            f"  {name_b}: {_fmt(blocks_b)} blocks -> {bs_b_s} blocks/server",
+            f"  p = {p_s} servers",
+            f"",
+            f"  Local Join on every server:  3 * ({sum_str}) * t_d",
+            f"",
+            f"  Elapsed = {elapsed}",
+            f"  Total   = {total}",
+        ])
+
+        return {
+            "operation":         "join",
+            "algorithm":         "local",
+            "table_a":           name_a,
+            "table_b":           name_b,
+            "blocks_a":          blocks_a,
+            "blocks_b":          blocks_b,
+            "blocks_per_proc_a": bs_a,
+            "blocks_per_proc_b": bs_b,
+            "num_processors":    p,
+            "elapsed":           elapsed,
+            "total":             total,
+            "explanation":       explanation,
+        }
+
+    else:
+        # ── Algorithm 2: BROADCAST JOIN ──────────────────────────
+        step1 = f"({sum_str}) * (t_s + t_d)"
+        step2 = f"({sum_str}) * (t_s + t_d)"
+        step3 = f"({sum_str}) * 3 * t_d"
+
+        elapsed = f"({step1}) + ({step2}) + ({step3})"
+        total   = f"{p_s} * ({elapsed})"
+
+        reason = "distributions differ or partition field != join field" if not colocated else ""
+
+        explanation = "\n".join([
+            f"Join: {name_a} * {name_b}  [BROADCAST JOIN -- {reason}]",
+            f"  {name_a}: {_fmt(blocks_a)} blocks -> {bs_a_s} blocks/server  (ceil({_fmt(blocks_a)}/{p_s}))",
+            f"  {name_b}: {_fmt(blocks_b)} blocks -> {bs_b_s} blocks/server  (ceil({_fmt(blocks_b)}/{p_s}))",
+            f"  p = {p_s} servers",
+            f"",
+            f"  Step 1 [send]    -- each server sends its partition to all others:",
+            f"    {step1}",
+            f"  Step 2 [receive] -- each server receives partitions from all others:",
+            f"    {step2}",
+            f"  Step 3 [join]    -- each server performs local Join:",
+            f"    {step3}",
+            f"",
+            f"  Elapsed = {elapsed}",
+            f"  Total   = {total}",
+        ])
+
+        return {
+            "operation":         "join",
+            "algorithm":         "broadcast",
+            "table_a":           name_a,
+            "table_b":           name_b,
+            "blocks_a":          blocks_a,
+            "blocks_b":          blocks_b,
+            "blocks_per_proc_a": bs_a,
+            "blocks_per_proc_b": bs_b,
+            "num_processors":    p,
+            "step1":             step1,
+            "step2":             step2,
+            "step3":             step3,
+            "elapsed":           elapsed,
+            "total":             total,
+            "explanation":       explanation,
+        }
 
 
 def apply_selectivity(blocks, selectivity_fraction):

@@ -57,7 +57,13 @@
     {
       "id":10,
       "task": "Даны таблицы Flowers(name, petal, size, color), size = 10^4 blocks и Sales(name, cname, amount, price), size = 10^6 blocks. 10 processors. Задача: выполнить Flowers Join Sales",
-      "answer" : "E = (10^3 + 10^5)*(td+ ts) + (10^3 + 10^5)*(td+ ts) + (10^3 + 10^5)*ts",
+      "answer" : "E = (10^3 + 10^5)*(td+ ts) + (10^3 + 10^5)*(td+ ts) + (10^3 + 10^5)*ts, T = 10*E",
+      "difficulty" : "low"
+    },
+    {
+      "id":11,
+      "task": "Даны таблицы Flowers(name, petal, size, color), size = 10^4 blocks и Sales(name, cname, amount, price), size = 10^6 blocks. Данные в таблице распределены по range(name). 10 processors. Задача: выполнить Flowers Join Sales",
+      "answer" : "E = 3*(10^3 + 10^5)td, T = 10*E",
       "difficulty" : "low"
     }
   ]

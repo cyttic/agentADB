@@ -56,19 +56,31 @@ def compute_parallel_join(
     num_processors: int,
     name_a:         str = "A",
     name_b:         str = "B",
+    distribution_a: str = "round_robin",
+    distribution_b: str = "round_robin",
+    join_field:     str = "",
 ) -> str:
     """
     Compute Elapsed and Total cost for ONE parallel Join operation.
 
-    Uses the broadcast algorithm:
-      Step 1 [send]    — (bs_a + bs_b) * (t_s + t_d)
-      Step 2 [receive] — (bs_a + bs_b) * (t_s + t_d)
-      Step 3 [join]    — (bs_a + bs_b) * 3 * t_d
+    Automatically chooses the algorithm based on data distribution:
 
-      where  bs_x = ceil(blocks_x / num_processors)
+    LOCAL JOIN (no communication):
+      Condition: both tables are partitioned by the same method (both hash or both range)
+                 on exactly the join_field.
+      Matching tuples are guaranteed to be on the same server.
+      Elapsed = 3 * (bs_a + bs_b) * t_d
+      Total   = p * Elapsed
 
+    BROADCAST JOIN (default):
+      Used when distributions differ or the partition field is not the join field.
+      Step 1 [send]    -- (bs_a + bs_b) * (t_s + t_d)
+      Step 2 [receive] -- (bs_a + bs_b) * (t_s + t_d)
+      Step 3 [join]    -- (bs_a + bs_b) * 3 * t_d
       Elapsed = Step1 + Step2 + Step3
-      Total   = num_processors * Elapsed
+      Total   = p * Elapsed
+
+    where bs_x = ceil(blocks_x / num_processors)
 
     Output is symbolic — never reduced to a single number.
 
@@ -78,11 +90,18 @@ def compute_parallel_join(
         num_processors: Number of parallel servers (p).
         name_a:         Human-readable name of the left table (e.g. "Flowers").
         name_b:         Human-readable name of the right table (e.g. "Sales").
+        distribution_a: Partition scheme of table A, e.g. "hash(name)", "range(id)", "round_robin".
+        distribution_b: Partition scheme of table B, e.g. "hash(name)", "range(id)", "round_robin".
+        join_field:     The field the Join is performed on (e.g. "name").
 
-    Returns JSON with step1, step2, step3, elapsed, total, and a verbose explanation.
+    Returns JSON with algorithm choice, elapsed, total, and a verbose explanation.
     """
     try:
-        result = _parallel_join_cost(blocks_a, blocks_b, num_processors, name_a, name_b)
+        result = _parallel_join_cost(
+            blocks_a, blocks_b, num_processors,
+            name_a, name_b,
+            distribution_a, distribution_b, join_field,
+        )
         return json.dumps(result, indent=2)
     except Exception as e:
         return json.dumps({"error": str(e)})
@@ -163,36 +182,48 @@ tools = [
 SYSTEM_PROMPT = """\
 You are an expert in parallel database systems specialising in Join cost analysis.
 
-══ ALGORITHM ══
-Parallel broadcast Join on p servers.
-Each server stores a local partition of every input table:
-  bs_R = ceil(B_R / p)   -- blocks of R per server
-  bs_S = ceil(B_S / p)   -- blocks of S per server
+══ TWO JOIN ALGORITHMS ══
 
-  Step 1 [send]    -- each server broadcasts its partition to all others:
-                     cost = (bs_R + bs_S) * (t_s + t_d)
+-- LOCAL JOIN (no communication) --
+  Condition: BOTH tables are partitioned by the SAME method (both hash OR both range)
+             on EXACTLY the join field.
+  Matching tuples are guaranteed to be on the same server -- no data transfer needed.
+  Every server joins its local partitions independently.
+
+  bs_R = ceil(B_R / p),  bs_S = ceil(B_S / p)
+  Elapsed = 3 * (bs_R + bs_S) * t_d
+  Total   = p * Elapsed
+
+-- BROADCAST JOIN (default, all other cases) --
+  Used when distributions differ, or partition field != join field, or round-robin.
+
+  Step 1 [send]    -- each server sends its partition to all others:
+                     (bs_R + bs_S) * (t_s + t_d)
   Step 2 [receive] -- each server receives partitions from all others:
-                     cost = (bs_R + bs_S) * (t_s + t_d)
+                     (bs_R + bs_S) * (t_s + t_d)
   Step 3 [join]    -- each server performs a local Join over all received data:
-                     cost = (bs_R + bs_S) * 3 * t_d
+                     (bs_R + bs_S) * 3 * t_d
 
   Elapsed = Step 1 + Step 2 + Step 3
   Total   = p * Elapsed
 
 ══ WORKFLOW ══
-1. Parse the task: identify table names, their total block counts, and p (server count).
-2. Identify the RA expression and the sequence of operations (left-to-right / inside-out).
+1. Parse the task: identify table names, block counts, p (server count),
+   distribution of each table, and the join field.
+2. Identify the sequence of operations in the RA expression.
 3. Execute operations in order:
    a. If a Select (sigma) precedes a Join:
       -- call apply_select_filter(blocks, selectivity_fraction, ...) to get the reduced block count.
       -- use result_blocks as input to the next compute_parallel_join call.
-   b. For each Join: call compute_parallel_join(blocks_a, blocks_b, num_processors, ...).
+   b. For each Join: call compute_parallel_join with distribution_a, distribution_b, join_field.
+      The tool picks the right algorithm automatically.
    c. For Join-of-Join (A Join B Join C): compute A Join B first, use the stated or estimated
       result size as input to the second join, then call compute_parallel_join again.
 4. If there are multiple operations: call sum_operation_costs([op1, op2, ...]).
 5. Present the final answer verbosely:
+   -- State which algorithm was chosen and WHY (co-located vs not)
    -- Table sizes and per-server partition sizes
-   -- Step 1 / 2 / 3 with numbers substituted (symbolic, not reduced)
+   -- Formula with numbers substituted (symbolic, not reduced)
    -- Elapsed and Total in symbolic form
 
 ══ STRICT OUTPUT FORMAT RULES ══
