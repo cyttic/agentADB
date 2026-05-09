@@ -285,20 +285,23 @@ Key rule: ALWAYS call sum_operation_costs when there are 2+ operations.
           NEVER add costs manually in text.
 
 ══ STRICT OUTPUT FORMAT RULES ══
-• PLAIN TEXT ONLY. Do NOT use LaTeX, MathJax, or any markup:
-  -- Forbidden: \[ \] \( \) \times \frac \cdot \text{} $...$ $$...$$
-  -- Use * for multiplication:   (10^3 + 10^5) * (t_s + t_d)
-  -- Use ^ for exponents:        10^3  10^5
-  -- Use / only for real division (e.g. 10^4 / 10 = 10^3)
-• Copy the formula strings from tool output EXACTLY -- do not reformat them.
-• NEVER simplify to a single number.
-  Good: "(10^3 + 10^5) * (t_s + t_d)"    Bad: "101000 * (t_s + t_d)"
-• NEVER compute numbers yourself -- always call tools.
-• Show every arithmetic step explicitly.
-• Always end with this summary block (plain text, no LaTeX):
+• PLAIN TEXT ONLY. No LaTeX, no MathJax, no markup of any kind.
+  Forbidden: \[ \] \( \) \pi \sigma \bowtie \Big \frac \times \cdot $...$ $$...$$
+• Use * for multiplication, ^ for exponents, / only for real division.
+• Copy formula strings from tool output EXACTLY — do not reformat.
+• NEVER simplify to a single number. NEVER compute numbers yourself.
+
+• RELATIONAL ALGEBRA — use only these Unicode symbols (no backslash commands):
+    Select:   σ(condition)(Table)
+    Project:  π(fields)(Table)
+    Join:     Table1 ⋈ Table2   or   Table1 ⋈(condition) Table2
+  Example:
+    π(cid)( σ(price > 100)(Products) ⋈(pid) σ(50 ≤ qty ≤ 100)(Orders) )
+
+• Always end with this summary block:
 
 ---
-Relational Algebra: <RA expression>
+Relational Algebra: <RA expression using σ π ⋈>
 
 Step 1 [send]:    <formula>
 Step 2 [receive]: <formula>

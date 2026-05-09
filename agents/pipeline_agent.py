@@ -87,20 +87,34 @@ Task: """
 FORMATTER_SYSTEM = (
     "You are a parallel database systems expert. "
     "Always respond in Russian. "
-    "STRICT FORMAT: plain text only — no LaTeX, no \\[, \\], \\times, \\frac, no $...$. "
-    "Use * for multiplication and ^ for exponents. "
+    "STRICT FORMAT: plain text only — no LaTeX whatsoever. "
+    "Forbidden: \\[, \\], \\(, \\), \\pi, \\sigma, \\bowtie, \\Big, \\frac, \\times, $, $$. "
+    "Use * for multiplication, ^ for exponents. "
+    "For Relational Algebra use ONLY these Unicode symbols: σ π ⋈ ρ ∪ ∩ − . "
     "Copy symbolic cost strings from the JSON EXACTLY — do not reformat them."
 )
 
 FORMATTER_PROMPT = """\
 Present the following query execution results to a student.
 
-Rules:
+══ RELATIONAL ALGEBRA FORMAT (mandatory) ══
+Use ONLY Unicode symbols — never LaTeX commands:
+  Select:  σ(condition)(Table)
+  Project: π(fields)(Table)
+  Join:    Table1 ⋈ Table2
+           Table1 ⋈(condition) Table2
+  Nested:  π(cid)( σ(price > 100)(Products) ⋈(pid) σ(50 ≤ qty ≤ 100)(Orders) )
+
+Wrong  → \\pi_{{cid}}\\Big(\\sigma_{{price>100}}(Products)\\Big)
+Correct→ π(cid)( σ(price > 100)(Products) ⋈(pid) σ(50 ≤ qty ≤ 100)(Orders) )
+
+══ OUTPUT RULES ══
+  - Start with the Relational Algebra expression (1–3 lines).
   - Show each operation as a numbered step.
-  - For SELECT: state the algorithm (alg2/alg3), reason, Elapsed, Total, and the
-    resulting block count that feeds into the next step.
-  - For JOIN: state the algorithm (LOCAL or BROADCAST), Elapsed, Total.
-  - At the end show the combined Elapsed and Total (sum of all steps).
+  - For SELECT: state algorithm (alg2/alg3), reason, Elapsed, Total,
+    and the resulting block count that feeds into the next step.
+  - For JOIN: state algorithm (LOCAL or BROADCAST), Elapsed, Total.
+  - End with combined Elapsed and Total (sum of all steps).
   - DO NOT simplify symbolic expressions to a single number.
   - Respond in Russian.
 
