@@ -101,21 +101,32 @@ Present the following query execution results to a student.
 Use ONLY Unicode symbols — never LaTeX commands:
   Select:  σ(condition)(Table)
   Project: π(fields)(Table)
-  Join:    Table1 ⋈ Table2
-           Table1 ⋈(condition) Table2
-  Nested:  π(cid)( σ(price > 100)(Products) ⋈(pid) σ(50 ≤ qty ≤ 100)(Orders) )
+  Join:    Table1 ⋈ Table2   or   Table1 ⋈(condition) Table2
+  Example: π(cid)( σ(price > 100)(Products) ⋈(pid) σ(50 ≤ qty ≤ 100)(Orders) )
+  Wrong  → \\pi_{{cid}}\\Big(\\sigma_{{price>100}}(Products)\\Big)
 
-Wrong  → \\pi_{{cid}}\\Big(\\sigma_{{price>100}}(Products)\\Big)
-Correct→ π(cid)( σ(price > 100)(Products) ⋈(pid) σ(50 ≤ qty ≤ 100)(Orders) )
+══ MANDATORY OUTPUT STRUCTURE ══
 
-══ OUTPUT RULES ══
-  - Start with the Relational Algebra expression (1–3 lines).
-  - Show each operation as a numbered step.
-  - For SELECT: state algorithm (alg2/alg3), reason, Elapsed, Total,
-    and the resulting block count that feeds into the next step.
-  - For JOIN: state algorithm (LOCAL or BROADCAST), Elapsed, Total.
-  - End with combined Elapsed and Total (sum of all steps).
-  - DO NOT simplify symbolic expressions to a single number.
+1. Relational Algebra expression (1–3 lines using σ π ⋈).
+
+2. For EACH step in "steps" array, print a numbered block with ALL of the following:
+   ┌─ Step N — <operation type> ─────────────────────────────
+   │  Операция:      <RA expression for this step>
+   │  Алгоритм:      <alg2 / alg3 / LOCAL JOIN / BROADCAST JOIN>
+   │  Причина:       <reason from JSON>
+   │  Блоков/сервер: <blocks_total / num_processors = blocks_per_server>
+   │  Elapsed:       <elapsed value from JSON — copy EXACTLY>
+   │  Total:         <total value from JSON — copy EXACTLY>
+   │  (SELECT only)  После фильтра: <result_blocks> блоков → передаётся в следующий шаг
+   └──────────────────────────────────────────────────────────
+
+3. Final summary:
+   Elapsed = <combined_elapsed — copy EXACTLY from JSON>
+   Total   = <combined_total  — copy EXACTLY from JSON>
+
+Rules:
+  - Copy ALL elapsed/total strings EXACTLY from the JSON — do not reformat or simplify.
+  - Do NOT merge or skip any step.
   - Respond in Russian.
 
 Computed results:
@@ -276,14 +287,21 @@ class PipelineAgent:
         print(f"[pipeline] JOIN {name_a} x {name_b}: {result['algorithm']}, "
               f"elapsed={result['elapsed']}")
 
+        bs_a = _fmt(math.ceil(info_a["blocks"] / p))
+        bs_b = _fmt(math.ceil(info_b["blocks"] / p))
+
         return {
-            "step_type":   "JOIN",
-            "table_a":     name_a,
-            "table_b":     name_b,
-            "algorithm":   result["algorithm"],
-            "elapsed":     result["elapsed"],
-            "total":       result["total"],
-            "explanation": result["explanation"],
+            "step_type":           "JOIN",
+            "table_a":             name_a,
+            "table_b":             name_b,
+            "blocks_a":            _fmt(info_a["blocks"]),
+            "blocks_b":            _fmt(info_b["blocks"]),
+            "blocks_per_server_a": bs_a,
+            "blocks_per_server_b": bs_b,
+            "algorithm":           result["algorithm"],
+            "elapsed":             result["elapsed"],
+            "total":               result["total"],
+            "explanation":         result["explanation"],
         }
 
     # ── Phase 3: format ───────────────────────────────────────

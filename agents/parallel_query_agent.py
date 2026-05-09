@@ -87,6 +87,20 @@ def extract_schema_from_text(task_text: str) -> str:
 
     import re
 
+    def _eval_num(s: str) -> int:
+        """Parse integers written as plain digits, 10^k, or N*10^k."""
+        s = s.strip().replace(',', '').replace(' ', '')
+        m = re.match(r'^(\d+)\*10\^(\d+)$', s)
+        if m:
+            return int(m.group(1)) * (10 ** int(m.group(2)))
+        m = re.match(r'^10\^(\d+)$', s)
+        if m:
+            return 10 ** int(m.group(1))
+        return int(float(s))
+
+    # Regex fragment that matches: 10^k, N*10^k, or plain integer (with optional commas)
+    _NUM = r'(?:\d+\s*\*\s*)?10\s*\^\s*\d+|[\d,]+'
+
     result = {
         "num_processors": 10,
         "block_size":     2000,
@@ -116,11 +130,12 @@ def extract_schema_from_text(task_text: str) -> str:
         if not fnames or tname.lower() in ('select', 'where', 'from', 'join', 'hash', 'range'):
             continue
         result["relations"][tname] = {
-            "fields":       fnames,
-            "key":          None,
-            "distribution": "round_robin",
-            "block_count":  None,
-            "record_count": None,
+            "fields":          fnames,
+            "key":             None,
+            "distribution":    "round_robin",
+            "block_count":     None,
+            "record_count":    None,
+            "field_size_bytes": None,
         }
 
     # ── keys ─────────────────────────────────────────────────
@@ -137,39 +152,61 @@ def extract_schema_from_text(task_text: str) -> str:
                 if k in rel["fields"] and rel["key"] is None:
                     rel["key"] = k
 
+    # ── block_size ────────────────────────────────────────────
+    # Also handle "block size of 2000 bytes" (no = or :)
+    bs_extra = re.search(
+        r'block\s+size\s+of\s+(\d+)', task_text, re.IGNORECASE
+    )
+    if bs_extra:
+        result["block_size"] = int(bs_extra.group(1))
+
+    # ── field_size_bytes ──────────────────────────────────────
+    # Patterns: "size of every field … is 10 bytes",
+    #           "each field is 10 bytes", "field size = 10 bytes"
+    fs_pat = re.search(
+        r'(?:every|each|каждого|all)\s+field.*?(\d+)\s*bytes?'
+        r'|field\s+size\s*(?:is|=|:)\s*(\d+)\s*bytes?'
+        r'|(\d+)\s*bytes?\s+(?:per\s+)?field',
+        task_text, re.IGNORECASE | re.DOTALL
+    )
+    if fs_pat:
+        fs = int(next(v for v in fs_pat.groups() if v is not None))
+        for rel in result["relations"].values():
+            rel.setdefault("field_size_bytes", fs)
+
     # ── block_count per table ─────────────────────────────────
-    # Pattern: "10,000 блоков", "10000 blocks", "(или 10,000 блоков)"
+    # Handles: "10,000 blocks", "10^4 blocks", "2*10^6 blocks", "или 10000 блоков"
     block_pat = re.compile(
-        r'(?:или\s+)?([\d,\s]+(?:\*10\^\d+)?)\s*блок|'
-        r'([\d,\s]+(?:\*10\^\d+)?)\s*block',
+        rf'(?:или\s+)?({_NUM})\s*блок'
+        rf'|({_NUM})\s*block',
         re.IGNORECASE
     )
     for bm in block_pat.finditer(task_text):
-        raw = (bm.group(1) or bm.group(2) or '').replace(',', '').replace(' ', '')
+        raw = (bm.group(1) or bm.group(2) or '').strip()
         try:
-            bc = int(float(raw))
-            # assign to the first table without block_count yet
+            bc = _eval_num(raw)
             for rel in result["relations"].values():
                 if rel["block_count"] is None:
                     rel["block_count"] = bc
                     break
-        except ValueError:
+        except (ValueError, AttributeError):
             pass
 
     # ── record_count ──────────────────────────────────────────
+    # Handles: "10^6 records", "10^8 records", "2*10^6 tuples"
     rec_pat = re.compile(
-        r'([\d,]+(?:\s*\*\s*10\s*\^\s*\d+)?)\s*(?:кортеж|tuple|record|строк|row)',
+        rf'({_NUM})\s*(?:кортеж|tuple|record|строк|row)',
         re.IGNORECASE
     )
     for rm in rec_pat.finditer(task_text):
-        raw = rm.group(1).replace(',', '').replace(' ', '')
+        raw = rm.group(1).strip()
         try:
-            rc = int(float(raw))
+            rc = _eval_num(raw)
             for rel in result["relations"].values():
                 if rel.get("record_count") is None:
                     rel["record_count"] = rc
                     break
-        except ValueError:
+        except (ValueError, AttributeError):
             pass
 
     # ── distribution ──────────────────────────────────────────
@@ -218,12 +255,14 @@ def extract_schema_from_text(task_text: str) -> str:
                     "range":           f"{lo}..{hi}",
                 }
 
-    # ── clean up None block_count so parse_schema doesn't choke ─
+    # ── clean up None values so parse_schema doesn't choke ──────
     for rel in result["relations"].values():
         if rel["block_count"] is None:
             del rel["block_count"]
         if rel["record_count"] is None:
             del rel["record_count"]
+        if rel.get("field_size_bytes") is None:
+            rel.pop("field_size_bytes", None)
 
     return json.dumps(result, indent=2)
 
@@ -444,14 +483,22 @@ def build_system_prompt(lang: str = "ru") -> str:
         "  Project: \u03c0(fields)(Table)\n"
         "  Join:    Table1 \u22c8 Table2   or   Table1 \u22c8(condition) Table2\n"
         "  Example: \u03c0(cid)( \u03c3(price > 100)(Products) \u22c8(pid) \u03c3(50 \u2264 qty \u2264 100)(Orders) )\n\n"
-        "After computing costs, ALWAYS end your response with this block:\n\n"
-        "---\n"
-        "Relational Algebra: <expression using \u03c3 \u03c0 \u22c8>\n\n"
-        "Algorithm: <alg2 or alg3> \u2014 <one-line reason>\n\n"
-        "Elapsed = <symbolic expression>\n"
-        "Total   = <symbolic expression>\n"
-        "---\n\n"
-        "NEVER skip this block. NEVER compute the numbers yourself \u2014 always call tools.\n"
+        "After computing costs, present the answer in this structure:\n\n"
+        "1. Relational Algebra expression (using \u03c3 \u03c0 \u22c8 \u2014 no LaTeX).\n\n"
+        "2. For EACH operation (Select / Sort / Join), a block:\n"
+        "   \u0428\u0430\u0433 N \u2014 <operation name>\n"
+        "   \u041e\u043f\u0435\u0440\u0430\u0446\u0438\u044f:      <RA expression for this step>\n"
+        "   \u0410\u043b\u0433\u043e\u0440\u0438\u0442\u043c:      <alg2 / alg3 / alg1 / alg2-sort>\n"
+        "   \u041f\u0440\u0438\u0447\u0438\u043d\u0430:       <one-line reason from decide_* tool>\n"
+        "   \u0411\u043b\u043e\u043a\u043e\u0432 \u0432\u0441\u0435\u0433\u043e:  <B>\n"
+        "   \u0411\u043b\u043e\u043a\u043e\u0432/\u0441\u0435\u0440\u0432\u0435\u0440: <B/p = bs>\n"
+        "   Elapsed:       <value from tool \u2014 copy EXACTLY>\n"
+        "   Total:         <value from tool \u2014 copy EXACTLY>\n\n"
+        "3. If multiple operations, call compose_costs, then show:\n"
+        "   Elapsed = <combined \u2014 copy EXACTLY>\n"
+        "   Total   = <combined \u2014 copy EXACTLY>\n\n"
+        "NEVER skip per-step Elapsed/Total. NEVER compute numbers yourself \u2014 always call tools.\n"
+        "NEVER collapse (A + B) into a single number in the output.\n"
         "If you are unsure which tool to call next, re-read the WORKFLOW section above."
     )
 

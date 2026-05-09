@@ -448,14 +448,22 @@ def sort_cost(block_count, num_processors, algorithm):
 def join_cost(blocks_s, blocks_t):
     """Placeholder formula: 3 * t_d * (B_s + B_t)"""
     print(f"[TOOL] join_cost(blocks_s={blocks_s}, blocks_t={blocks_t})")
-    total_blocks = blocks_s + blocks_t
-    elapsed = f"3 * {total_blocks} * t_d"
-    total   = f"3 * {total_blocks} * t_d"
+    bs_s = _fmt(blocks_s)
+    bs_t = _fmt(blocks_t)
+    elapsed = f"3 * ({bs_s} + {bs_t}) * t_d"
+    total   = f"3 * ({bs_s} + {bs_t}) * t_d"
     return {
         "operation":   "join",
+        "blocks_s":    bs_s,
+        "blocks_t":    bs_t,
         "elapsed":     elapsed,
         "total":       total,
-        "explanation": f"Join: 3 * t_d * (B_s + B_t) = 3 * t_d * ({blocks_s} + {blocks_t}) (placeholder, will be refined).",
+        "explanation": (
+            f"Join: 3 * t_d * (B_s + B_t)\n"
+            f"  B_s = {bs_s} blocks\n"
+            f"  B_t = {bs_t} blocks\n"
+            f"  Elapsed = 3 * ({bs_s} + {bs_t}) * t_d"
+        ),
     }
 
 
