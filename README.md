@@ -1,133 +1,236 @@
-# 🧠 DB Assistant — Multi-Agent System
+# DB Assistant Framework
 
-A multi-agent system built with **LangGraph + GPT-4o** that handles two distinct database topics through a single conversational interface:
+A multi-agent system for solving advanced database problems through a single conversational interface — terminal or web UI.
 
-- **Schedule Serializability** — checks view-serializability and conflict-serializability of transaction schedules
-- **Parallel Query Cost Analysis** — computes parallel and total execution time for distributed database queries
-
-An orchestrator routes each user message to the appropriate specialized agent automatically.
+The orchestrator classifies every user message and routes it to the appropriate specialized agent. All arithmetic is computed by deterministic Python tools; the LLM only reasons, plans, and formats.
 
 ---
 
-## 📁 Project Structure
+## Agents
 
-```
-project/
-├── main.py                          # Entry point — interactive loop
-├── orchestrator.py                  # Router + session manager
-│
-├── agents/
-│   ├── __init__.py
-│   ├── serializability_agent.py     # Agent for schedule serializability
-│   └── parallel_query_agent.py      # Agent for parallel query cost analysis
-│
-└── tools/
-    ├── gemini_view.py               # View-serializability printer (colored output)
-    └── confl_ser.py                 # Conflict-serializability analyzer (colored output)
-```
+| Domain | Agent | What it solves |
+|--------|-------|----------------|
+| `SERIAL` | SerializabilityAgent | View-serializability and conflict-serializability of transaction schedules |
+| `QUERY` | ParallelQueryAgent | Parallel cost of Select and Sort operations (alg2 / alg3, symbolic output) |
+| `JOIN` | PipelineAgent | Parallel Join cost — local join and broadcast join; chains Select → Join → Join |
+| `MAPREDUCE` | MapReduceAgent | Map-Reduce algorithm design — table, chain description, pseudocode |
 
 ---
 
-## ⚙️ How It Works
+## Architecture
 
 ```
 User input
-    ↓
-Orchestrator (lightweight LLM router)
-    ├── SERIAL  → SerializabilityAgent
-    └── QUERY   → ParallelQueryAgent
+    │
+    ▼
+Orchestrator  ── single LLM call classifies the message ──▶ SERIAL / QUERY / JOIN / MAPREDUCE
+    │
+    ├── SERIAL     ──▶ SerializabilityAgent   (LangGraph + tools)
+    ├── QUERY      ──▶ ParallelQueryAgent     (LangGraph + tools)
+    ├── JOIN       ──▶ PipelineAgent          (plan → execute → format)
+    └── MAPREDUCE  ──▶ MapReduceAgent         (LLM reasoning)
 ```
 
-### Orchestrator (`orchestrator.py`)
-- Makes a single cheap LLM call to classify the user's message as `SERIAL`, `QUERY`, or `UNKNOWN`
-- Maintains **separate conversation histories** for each agent so they don't interfere
-- The `ParallelQueryAgent` also keeps a persistent `db_context` across turns — schema is parsed once and reused for all follow-up queries
+### SerializabilityAgent
+LangGraph agent with deterministic Python tools.
 
-### SerializabilityAgent (`agents/serializability_agent.py`)
-Handles transaction schedule analysis. Tools:
 | Tool | Description |
 |------|-------------|
-| `parse_schedule_from_text` | Parses raw text schedules (supports RTL/Hebrew bidi text) |
-| `check_view_serializability` | Full view-serializability check (enumeration + blind writes) |
-| `check_conflict_serializability` | Conflict-serializability via precedence graph + cycle detection |
+| `parse_schedule_from_text` | Parses raw schedule text; strips Unicode bidi characters (RTL / Hebrew support) |
+| `check_view_serializability` | Full view-serializability check via serial-order enumeration + blind-write detection |
+| `check_conflict_serializability` | Conflict-serializability via precedence graph cycle detection |
 
-### ParallelQueryAgent (`agents/parallel_query_agent.py`)
-Handles parallel DB cost problems. Tools:
+### ParallelQueryAgent
+LangGraph agent. Parses schema from natural language, then computes symbolic costs.
+
 | Tool | Description |
 |------|-------------|
-| `parse_db_schema` | Parses schema, table sizes, block size, processor count — stored in state |
-| `compute_block_count` | Calculates block count for any relation |
-| `compute_selectivity` | Estimates result size for equality / range conditions |
-| `compute_parallel_cost` | Computes parallel time and total time for scan/join algorithms |
+| `extract_schema_from_text` | Extracts table sizes, block size, processor count, distributions from raw text. Handles `10^k` notation |
+| `parse_schema` | Converts record counts + field sizes to block counts |
+| `decide_select_algorithm` | Picks alg2 or alg3 based on partition scheme and query type |
+| `select_cost` | Elapsed and Total for a Select in symbolic form |
+| `decide_sort_algorithm` | Picks sort algorithm (alg1 / alg2) based on distribution |
+| `sort_cost` | 4-step sort cost (local sort → send → receive → merge) |
+
+### PipelineAgent — for Join queries
+Three-phase deterministic pipeline (no LLM in the execution step):
+
+```
+Phase 1 — PLAN    : single LLM call → structured JSON (ordered list of SELECT / JOIN ops)
+Phase 2 — EXECUTE : Python iterates the plan, calls db_ops tools, chains outputs
+Phase 3 — FORMAT  : single LLM call → formats computed data into a Russian response
+```
+
+Join algorithms chosen automatically by distribution:
+
+| Condition | Algorithm | Cost |
+|-----------|-----------|------|
+| Both tables hash/range on the join field | **Local join** | `3*(bs_a + bs_b)*t_d` |
+| Any other case | **Broadcast join** | Step1 + Step2 + Step3 |
+
+Supports compound expressions: `σ(cond)(A) ⋈ B`, `(A ⋈ B) ⋈ C`.
+
+### MapReduceAgent
+Stateful LLM agent (conversation history kept). For each task produces:
+
+1. **Visualization table** — pipe-separated, monospace-rendered in the web UI:
+
+```
+| INPUT    | MAP                       | REDUCE                              |
+|----------|---------------------------|-------------------------------------|
+| d1 → p1  | [hash(word): (word, 1)]   | p1: [w1:[1,1,1],  w2:[1,1]]        |
+| d2 → p2  | [hash(word): (word, 1)]   | p2: [w3:[1,1],    w4:[1,1,1]]      |
+| ...      |                           |                                     |
+| dn → pn  | [hash(word): (word, 1)]   | pn: [...]                           |
+```
+
+2. **Chain description** — numbered steps explaining shuffle and data flow.
+3. **Pseudocode** — `map() / reduce()` with `send(key, val) to P(hash(key))` notation.
 
 ---
 
-## 🚀 Installation
+## Project Structure
 
-```bash
-pip install langgraph langchain langchain-openai
+```
+├── main.py                          # Terminal entry point
+├── orchestrator.py                  # LLM router + session manager
+├── llm_factory.py                   # Provider selector (OpenAI / Anthropic / Ollama / llama.cpp)
+├── config.json                      # Default provider, model, server settings
+├── requirements.txt
+│
+├── agents/
+│   ├── serializability_agent.py     # SERIAL domain
+│   ├── parallel_query_agent.py      # QUERY domain
+│   ├── pipeline_agent.py            # JOIN domain — deterministic plan-execute-format
+│   ├── join_cost_agent.py           # Join cost tools (used internally)
+│   └── mapreduce_agent.py           # MAPREDUCE domain
+│
+├── tools/
+│   ├── db_ops.py                    # All cost functions — select, sort, join, compose
+│   ├── gemini_view.py               # View-serializability colored report
+│   └── confl_ser.py                 # Conflict-serializability precedence graph
+│
+├── api/
+│   └── app.py                       # FastAPI web server + single-page chat UI
+│
+└── evals/
+    └── test_cases.json              # 14 labelled test cases with expected answers
 ```
 
-Set your OpenAI API key:
+---
+
+## Installation
+
+```bash
+pip install -r requirements.txt
+```
+
+Set your API key (depending on provider):
 
 ```bash
 export OPENAI_API_KEY=sk-...
+export ANTHROPIC_API_KEY=sk-ant-...   # if using Anthropic
 ```
 
-Run:
+---
+
+## Running
+
+### Terminal (interactive)
 
 ```bash
 python main.py
 ```
 
+On startup you select the LLM provider and model interactively. Type `model` at any time to switch mid-session.
+
+### Web UI
+
+```bash
+uvicorn api.app:app --host 0.0.0.0 --port 8000 --reload
+```
+
+Then open `http://localhost:8000`.
+
+The web UI includes:
+- Sidebar with example queries for all four domains
+- Live model switcher (provider + model without restart)
+- Language toggle (RU / EN)
+- Chat reset button
+- Domain badge on every agent response (`SERIAL` / `QUERY` / `JOIN` / `MAPREDUCE`)
+
 ---
 
-## 💬 Example Queries
+## Supported LLM Providers
 
-**Serializability:**
+| Provider | How to select | Notes |
+|----------|---------------|-------|
+| OpenAI | `openai` | gpt-4o recommended |
+| Anthropic | `anthropic` | claude-sonnet-4-5 and above |
+| Ollama | `ollama` | local server at `127.0.0.1:11434` |
+| llama.cpp | `local` | `/completion` endpoint; host/port in `config.json` |
+
+Provider and model are set in `config.json` (`default_provider`, `default_model`) or chosen interactively at startup.
+
+---
+
+## Example Queries
+
+**Serializability**
 ```
 Is r1(A) w2(A) r2(B) w1(B) conflict-serializable?
 Check view-serializability: r2(B) w2(A) r1(A) r3(A) w1(B) w2(B) w3(B)
 ```
 
-**Parallel query cost:**
+**Parallel query cost**
 ```
-10 processors, block size 2000 bytes, Customers 10^6 rows, Orders 10^8 rows.
-Find all customers who ordered products over 100₪ in quantities 50–100.
-Orders distributed by round-robin.
+Table Flights(fid, date, from, to, seats), 10,000 blocks, 10 processors,
+hash(fid) distribution. Find: σ_{fid = 777}(Flights).
+```
+
+**Join cost**
+```
+Flowers(name, petal, size, color) — 10^4 blocks, hash(name).
+Sales(name, cname, amount, price) — 10^6 blocks, hash(name).
+10 processors. Perform Flowers join Sales.
+```
+
+**Map-Reduce**
+```
+Count how many times each word appears across documents d1..dn using n servers.
+Input: documents. Output: (word, count).
 ```
 
 ---
 
-## 🏗️ Architecture Notes
+## Key Design Decisions
 
-- **All math is in Python tools** — the LLM only reasons and orchestrates, never computes numbers itself
-- **Deterministic output** — tools produce colored terminal reports via ANSI codes, consistent across runs
-- **RTL/Hebrew support** — the schedule parser strips Unicode bidi control characters and handles reversed token order
-- **Separate state per agent** — serializability history and query DB context never mix
-- **Easily extensible** — add a new agent by creating `agents/new_agent.py`, adding a route in `orchestrator.py`
-
----
-
-## 🛠️ Adding a New Agent
-
-1. Create `agents/my_agent.py` with a `build_agent()` function that returns a compiled LangGraph
-2. In `orchestrator.py`, import it and add a new domain label to the router prompt
-3. Add the routing branch in `Orchestrator.handle()`
+- **LLM never computes numbers** — every cost formula is produced by Python tools in `db_ops.py`. The LLM only picks algorithms and formats output.
+- **Symbolic output** — results like `(10^3 + 10^5) * (t_s + t_d)` are never collapsed to a single number.
+- **PipelineAgent separation** — for compound queries (Select + Join, Join + Join) the plan is extracted by one LLM call, then Python executes it deterministically. This prevents the LLM from skipping steps.
+- **10^k notation** — block counts and per-server sizes are formatted as `10^3`, `10^5` etc. throughout.
+- **Monospace rendering** — agent responses in the web UI are wrapped in `<pre>` with JetBrains Mono so tables and formulas always align correctly.
 
 ---
 
-## 📦 Dependencies
+## Adding a New Agent
 
-| Package | Purpose |
-|---------|---------|
-| `langgraph` | Agent graph execution |
-| `langchain` | Tool definitions, message types |
-| `langchain-openai` | GPT-4o integration |
-| `openai` | Underlying API client |
+1. Create `agents/my_agent.py` — implement a class or `build_agent()` function.
+2. In `orchestrator.py`:
+   - Import it.
+   - Add a new label (e.g. `MYTOPIC`) to `ROUTER_PROMPT` with 2–3 few-shot examples.
+   - Add the label to `_VALID`.
+   - Add a branch in `Orchestrator.handle()`.
+3. Add a CSS badge class `domain-MYTOPIC` in `api/app.py` if using the web UI.
 
 ---
 
-## 📝 Language Note
+## Language
 
-Both agents are configured to **always respond in Russian**, regardless of the input language. To change this, update the `LANGUAGE RULE` line in the `SYSTEM_PROMPT` of each agent file.
+All agents respond in **Russian** by default. To switch to English, call the `/language` endpoint:
+
+```bash
+curl -X POST http://localhost:8000/language -H "Content-Type: application/json" -d '{"lang":"en"}'
+```
+
+Or use the RU / EN toggle in the web UI header.
