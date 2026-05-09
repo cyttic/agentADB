@@ -65,6 +65,18 @@
       "task": "Даны таблицы Flowers(name, petal, size, color), size = 10^4 blocks и Sales(name, cname, amount, price), size = 10^6 blocks. Данные в таблице распределены по range(name). 10 processors. Задача: выполнить Flowers Join Sales",
       "answer" : "E = 3*(10^3 + 10^5)td, T = 10*E",
       "difficulty" : "low"
+    },
+    {
+      "id":12,
+      "task": "Даны таблицы Flowers(name, petal, size, color), size = 10^4 blocks и Sales(name, cname, amount, price), size = 10^6 blocks. Данные в таблице распределены по hash(name). 10 processors. Задача: выполнить Select Join for tables Flowers and Sales where 100<price<200",
+      "answer" : "unknown",
+      "difficulty" : "high"
+    },
+    {
+      "id":13,
+      "task": "Даны таблицы Flowers(name, petal, size, color), size = 10^4 blocks и Sales(name, cname, amount, price), size = 10^6 blocks. Данные в таблице распределены по hash(name). 10 processors. Задача: выполнить Select Sales where 100<price<200",
+      "answer" : "unknown",
+      "difficulty" : "low"
     }
   ]
 }

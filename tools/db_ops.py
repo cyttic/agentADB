@@ -272,20 +272,22 @@ def select_cost(block_count, num_processors, algorithm, relevant_processors=1):
     p           = num_processors
     B           = block_count
     bs_per_proc = math.ceil(B / p)
+    bs_s        = _fmt(bs_per_proc)
+    p_s         = _fmt(p)
 
     if algorithm == "alg2":
-        elapsed = f"{bs_per_proc} * t_d"
-        total   = f"{p} * {bs_per_proc} * t_d"
+        elapsed = f"{bs_s} * t_d"
+        total   = f"{p_s} * {bs_s} * t_d"
         explanation = (
-            f"alg2: all {p} processors scan {bs_per_proc} blocks each in parallel.\n"
+            f"alg2: all {p_s} processors scan {bs_s} blocks each in parallel.\n"
             f"  Elapsed = {elapsed}\n"
-            f"  Total   = {p} x Elapsed = {total}"
+            f"  Total   = {p_s} x Elapsed = {total}"
         )
 
     elif algorithm == "alg3":
         rel_p   = relevant_processors if relevant_processors else 1
-        elapsed = f"{bs_per_proc} * t_d"
-        total   = f"{rel_p} * {bs_per_proc} * t_d" if rel_p > 1 else f"{bs_per_proc} * t_d"
+        elapsed = f"{bs_s} * t_d"
+        total   = f"{rel_p} * {bs_s} * t_d" if rel_p > 1 else f"{bs_s} * t_d"
         explanation = (
             f"alg3: only {rel_p} relevant processor(s) participate.\n"
             f"  Elapsed = {elapsed}\n"

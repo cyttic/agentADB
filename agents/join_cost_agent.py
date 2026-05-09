@@ -21,6 +21,8 @@ the final cost is the sum of all individual operation costs.
 
 import os
 import json
+import math
+import re as _re
 from typing import Annotated
 
 from langchain_core.tools import tool
@@ -31,9 +33,12 @@ from langgraph.prebuilt import ToolNode
 from typing_extensions import TypedDict
 
 from tools.db_ops import (
-    parallel_join_cost  as _parallel_join_cost,
-    apply_selectivity   as _apply_selectivity,
-    compose_costs       as _compose_costs,
+    parallel_join_cost       as _parallel_join_cost,
+    apply_selectivity        as _apply_selectivity,
+    compose_costs            as _compose_costs,
+    decide_select_algorithm  as _decide_select_algorithm,
+    select_cost              as _select_cost,
+    _fmt,
 )
 
 
@@ -108,34 +113,81 @@ def compute_parallel_join(
 
 
 @tool
-def apply_select_filter(
+def compute_select_cost(
     blocks:               int,
-    selectivity_fraction: float,
+    num_processors:       int,
+    distribution:         str,
+    select_field:         str,
+    condition_type:       str,
+    selectivity_fraction: float = 1.0,
     table_name:           str = "",
     condition:            str = "",
 ) -> str:
     """
-    Reduce a table's block count after applying a Select (σ) filter.
+    Compute the cost of a Select (σ) operation AND the resulting reduced block count.
 
-    Use this BEFORE compute_parallel_join when the RA expression contains a
-    Select that feeds into a Join (e.g. σ_price>100(Sales) ⋈ Flowers).
+    Use this as STEP 1 in a Select+Join pipeline.
+    The returned result_blocks feeds directly into compute_parallel_join as blocks_a or blocks_b.
+
+    Algorithm decision (same rules as parallel Select):
+      alg2 — all processors scan locally (round-robin, or select field != partition field,
+              or hash/range on different field)
+      alg3 — only relevant processors participate (hash/range on exactly the select field,
+              point equality search)
+
+    Cost formulas:
+      alg2: Elapsed = ceil(B/p) * t_d,  Total = p * Elapsed
+      alg3: Elapsed = ceil(B/p) * t_d,  Total = Elapsed  (only 1 proc for point search)
 
     Args:
-        blocks:               Block count of the table BEFORE the filter.
-        selectivity_fraction: Fraction of tuples that satisfy the condition (0.0–1.0).
-                              E.g. 0.01 means 1 % of tuples match.
-                              If the problem gives distinct values V and a range condition,
-                              derive it as (matching_values / V).
-        table_name:           Optional: name of the table being filtered.
-        condition:            Optional: human-readable condition string (e.g. "price > 100").
+        blocks:               Total block count of the table BEFORE the filter.
+        num_processors:       Number of parallel servers (p).
+        distribution:         Partition scheme: "hash(field)", "range(field)", "round_robin".
+        select_field:         Field used in the WHERE condition (e.g. "price").
+        condition_type:       "point" (field=value), "range" (field>a AND field<b), "scan" (field!=value).
+        selectivity_fraction: Fraction of tuples that match the condition (0.0–1.0).
+                              If unknown, use 1.0 (full scan — all blocks pass through).
+                              Derive from distinct values V: point -> 1/V, range -> k/V.
+        table_name:           Optional name for display (e.g. "Sales").
+        condition:            Optional condition string for display (e.g. "100 < price < 200").
 
-    Returns JSON with result_blocks (use this as input to compute_parallel_join).
+    Returns JSON with:
+        operation:     "select"
+        algorithm:     "alg2" or "alg3"
+        elapsed:       symbolic cost string  ← include in sum_operation_costs
+        total:         symbolic cost string  ← include in sum_operation_costs
+        result_blocks: block count AFTER the filter  ← pass to compute_parallel_join
     """
     try:
-        result = _apply_selectivity(blocks, selectivity_fraction)
-        result["table_name"] = table_name
-        result["condition"]  = condition
-        return json.dumps(result, indent=2)
+        m         = _re.search(r'\((\w+)\)', distribution)
+        dist_field = m.group(1) if m else ""
+
+        algo = _decide_select_algorithm(select_field, condition_type, dist_field, distribution)
+        rel_p = algo.get("relevant_processors") or 1
+        cost  = _select_cost(blocks, num_processors, algo["algorithm"], rel_p)
+
+        result_blocks = max(1, math.ceil(blocks * selectivity_fraction))
+        bs = math.ceil(blocks / num_processors)
+
+        return json.dumps({
+            "operation":     "select",
+            "table_name":    table_name,
+            "condition":     condition,
+            "algorithm":     algo["algorithm"],
+            "reason":        algo["reason"],
+            "elapsed":       cost["elapsed"],
+            "total":         cost["total"],
+            "result_blocks": result_blocks,
+            "explanation": "\n".join([
+                f"Select on {table_name or 'table'} [{algo['algorithm']}]",
+                f"  Reason: {algo['reason']}",
+                f"  {_fmt(blocks)} blocks / {num_processors} procs = {_fmt(bs)} blocks/server",
+                f"  Elapsed = {cost['elapsed']}",
+                f"  Total   = {cost['total']}",
+                f"  After filter (selectivity={selectivity_fraction}): {_fmt(result_blocks)} blocks",
+                f"  -- pass result_blocks={result_blocks} to compute_parallel_join",
+            ]),
+        }, indent=2)
     except Exception as e:
         return json.dumps({"error": str(e)})
 
@@ -170,7 +222,7 @@ def sum_operation_costs(operations_json: str) -> str:
 
 tools = [
     compute_parallel_join,
-    apply_select_filter,
+    compute_select_cost,
     sum_operation_costs,
 ]
 
@@ -208,23 +260,29 @@ You are an expert in parallel database systems specialising in Join cost analysi
   Total   = p * Elapsed
 
 ══ WORKFLOW ══
-1. Parse the task: identify table names, block counts, p (server count),
-   distribution of each table, and the join field.
-2. Identify the sequence of operations in the RA expression.
-3. Execute operations in order:
-   a. If a Select (sigma) precedes a Join:
-      -- call apply_select_filter(blocks, selectivity_fraction, ...) to get the reduced block count.
-      -- use result_blocks as input to the next compute_parallel_join call.
-   b. For each Join: call compute_parallel_join with distribution_a, distribution_b, join_field.
-      The tool picks the right algorithm automatically.
-   c. For Join-of-Join (A Join B Join C): compute A Join B first, use the stated or estimated
-      result size as input to the second join, then call compute_parallel_join again.
-4. If there are multiple operations: call sum_operation_costs([op1, op2, ...]).
-5. Present the final answer verbosely:
-   -- State which algorithm was chosen and WHY (co-located vs not)
-   -- Table sizes and per-server partition sizes
-   -- Formula with numbers substituted (symbolic, not reduced)
-   -- Elapsed and Total in symbolic form
+
+-- SIMPLE JOIN (no Select) --
+  1. Call compute_parallel_join(blocks_a, blocks_b, num_processors,
+                                 distribution_a, distribution_b, join_field).
+  2. Report Elapsed and Total from the result.
+
+-- SELECT + JOIN (two-step pipeline) --
+  Step 1: Call compute_select_cost for the filtered table.
+          -- Returns elapsed, total for the Select AND result_blocks (reduced size).
+  Step 2: Call compute_parallel_join using result_blocks as the filtered table size.
+          -- Pass the ORIGINAL (unfiltered) size for the other table.
+          -- Pass the distribution of the FILTERED table AS-IS (filter preserves partition).
+  Step 3: Call sum_operation_costs([select_result, join_result]).
+          -- Final cost = Select cost + Join cost (SUMMED, not nested).
+
+-- JOIN + JOIN (A Join B Join C) --
+  Step 1: Call compute_parallel_join for A Join B.
+  Step 2: Use the stated or estimated result size of (A Join B) as one input.
+          Call compute_parallel_join again for (A Join B) Join C.
+  Step 3: Call sum_operation_costs([join1_result, join2_result]).
+
+Key rule: ALWAYS call sum_operation_costs when there are 2+ operations.
+          NEVER add costs manually in text.
 
 ══ STRICT OUTPUT FORMAT RULES ══
 • PLAIN TEXT ONLY. Do NOT use LaTeX, MathJax, or any markup:

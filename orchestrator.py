@@ -14,7 +14,7 @@ from langchain_core.messages import HumanMessage, AIMessage
 
 from agents.serializability_agent import build_agent as build_serial_agent
 from agents.parallel_query_agent  import build_agent as build_query_agent
-from agents.join_cost_agent       import build_agent as build_join_agent
+from agents.pipeline_agent        import PipelineAgent
 from llm_factory                  import build_llm, LLMConfig
 
 
@@ -129,13 +129,12 @@ class Orchestrator:
         self.llm        = build_llm(llm_config)
         self.llm_config = llm_config
 
-        self.serial_agent = build_serial_agent(llm=self.llm)
-        self.query_agent  = build_query_agent(llm=self.llm)
-        self.join_agent   = build_join_agent(llm=self.llm)
+        self.serial_agent   = build_serial_agent(llm=self.llm)
+        self.query_agent    = build_query_agent(llm=self.llm)
+        self.pipeline_agent = PipelineAgent(llm=self.llm)
 
         self.serial_history:   list = []
         self.query_history:    list = []
-        self.join_history:     list = []
         self.query_db_context: dict = {}
 
     def _route(self, user_input: str) -> str:
@@ -190,14 +189,8 @@ class Orchestrator:
             return last_ai.content if last_ai else "(no response)"
 
         elif domain == "JOIN":
-            self.join_history.append(HumanMessage(content=user_input))
-            result = self.join_agent.invoke({"messages": self.join_history})
-            self.join_history = result["messages"]
-            last_ai = next(
-                (m for m in reversed(self.join_history) if isinstance(m, AIMessage)),
-                None,
-            )
-            return last_ai.content if last_ai else "(no response)"
+            # Pipeline agent handles planning + execution + formatting deterministically
+            return self.pipeline_agent.handle(user_input)
 
         else:
             return (
