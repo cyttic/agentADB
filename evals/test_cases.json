@@ -83,6 +83,25 @@
       "task": "Даны таблицы Flowers(name, petal, size, color), size = 10^4 blocks и Sales(name, cname, amount, price), size = 10^6 blocks и Person(id, name). Данные в таблицах Flowers и Sales распределены по hash(name), а в таблице Person — по id  . 10 processors. Задача: выполнить Join(Flowers, Sales) Join (Person)",
       "answer" : "unknown",
       "difficulty" : "high"
+    },
+    {
+      "id":15,
+      "task": "Given a parallel database with 10 processors, block size of 2000 bytes, disk access cost td, and block transfer cost between processors ts. The following relations are stored in the system: Customers(cid, cname, city), Orders(pid, cid, date, quantity), Products(pid, pname, price). Orders.cid and Orders.pid are foreign keys. The size of every field in every relation is 10 bytes. Relation Customers contains 10^6 records. Relation Products contains 10^6 records. Relation Orders contains 10^8 records. Field Orders.quantity has 100 distinct values in the range 1..100 with uniform distribution. Field pid has 1000 distinct values with uniform distribution in both Products and Orders. Relations Customers and Products are distributed among the processors using the round-robin method. Find all customers (cid) who bought products costing more than 100 shekels in quantities between 50 and 100 units in a single order, when relation Orders is distributed among processors using hash(pid) partitioning. Propose an algorithm for solving the query and calculate running times (parallel time and total time). Write the query in relational algebra (RA).",
+      "answer" : "unknown",
+      "difficulty" : "very high",
+      "notion":"HW1 Task 3c"      
+    },
+    {
+      "id":16,
+      "task": "Посчитать сколько раз слова встречаются в тексте документов. Дано d1,d2,...,dn  документов. ",
+      "answer" : "unknown",
+      "difficulty" : "low"      
+    },
+    {
+      "id":17,
+      "task": "Найти в каких документах встречаюься слова. Дано d1,d2,...,dn  документов",
+      "answer" : "unknown",
+      "difficulty" : "low"      
     }
   ]
 }

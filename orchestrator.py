@@ -15,6 +15,7 @@ from langchain_core.messages import HumanMessage, AIMessage
 from agents.serializability_agent import build_agent as build_serial_agent
 from agents.parallel_query_agent  import build_agent as build_query_agent
 from agents.pipeline_agent        import PipelineAgent
+from agents.mapreduce_agent       import MapReduceAgent
 from llm_factory                  import build_llm, LLMConfig
 
 
@@ -28,12 +29,13 @@ from llm_factory                  import build_llm, LLMConfig
 
 ROUTER_PROMPT = """Your task: read the user message and output exactly one word.
 
-The word must be one of: SERIAL, QUERY, JOIN, UNKNOWN
+The word must be one of: SERIAL, QUERY, JOIN, MAPREDUCE, UNKNOWN
 
 Rules:
 - Output SERIAL if the message is about transaction schedules, read/write operations, serializability, precedence graphs, or conflict analysis.
 - Output JOIN if the message is about computing the cost of a Join (⋈) operation in a parallel database — possibly combined with Select (σ) before the join, or joining more than two tables.
 - Output QUERY if the message is about parallel databases, processors, block size, query cost, round-robin, hash partitioning, range partitioning, relational algebra, or table scan / sort cost (but NOT primarily Join).
+- Output MAPREDUCE if the message is about a Map-Reduce task: word count, distributed aggregation, inverted index, or any task described in terms of map and reduce phases over distributed data.
 - Output UNKNOWN if it is neither.
 
 Do NOT explain. Do NOT add punctuation. Output only the single word.
@@ -70,6 +72,15 @@ Answer: JOIN
 Message: "Calculate cost: A ⋈ B ⋈ C, 12 processors, A=10^4 blocks, B=10^6 blocks, C=500 blocks."
 Answer: JOIN
 
+Message: "Count how many times each word appears across documents. Input: documents d1..dn, n servers."
+Answer: MAPREDUCE
+
+Message: "Design a Map-Reduce algorithm to find the maximum price per product category."
+Answer: MAPREDUCE
+
+Message: "Use MapReduce to count the number of orders per customer."
+Answer: MAPREDUCE
+
 Message: "What is the weather today?"
 Answer: UNKNOWN
 
@@ -100,7 +111,7 @@ RED    = "\033[31m"
 #    instead of doing a strict equality check
 # ══════════════════════════════════════════════════════════════
 
-_VALID = {"SERIAL", "QUERY", "JOIN", "UNKNOWN"}
+_VALID = {"SERIAL", "QUERY", "JOIN", "MAPREDUCE", "UNKNOWN"}
 
 def _extract_domain(raw: str) -> str:
     """
@@ -129,9 +140,10 @@ class Orchestrator:
         self.llm        = build_llm(llm_config)
         self.llm_config = llm_config
 
-        self.serial_agent   = build_serial_agent(llm=self.llm)
-        self.query_agent    = build_query_agent(llm=self.llm)
-        self.pipeline_agent = PipelineAgent(llm=self.llm)
+        self.serial_agent    = build_serial_agent(llm=self.llm)
+        self.query_agent     = build_query_agent(llm=self.llm)
+        self.pipeline_agent  = PipelineAgent(llm=self.llm)
+        self.mapreduce_agent = MapReduceAgent(llm=self.llm)
 
         self.serial_history:   list = []
         self.query_history:    list = []
@@ -192,11 +204,15 @@ class Orchestrator:
             # Pipeline agent handles planning + execution + formatting deterministically
             return self.pipeline_agent.handle(user_input)
 
+        elif domain == "MAPREDUCE":
+            return self.mapreduce_agent.handle(user_input)
+
         else:
             return (
-                "Я специализируюсь на трёх темах:\n"
+                "Я специализируюсь на четырёх темах:\n"
                 "  • Сериализуемость расписаний транзакций\n"
                 "  • Стоимость параллельных запросов (Select, Sort)\n"
                 "  • Стоимость параллельного Join\n"
+                "  • Алгоритмы Map-Reduce\n"
                 "Пожалуйста, уточните ваш вопрос."
             )

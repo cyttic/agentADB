@@ -538,6 +538,14 @@ HTML_PAGE = """<!DOCTYPE html>
     border-top-right-radius: 3px;
   }
   .msg.agent .bubble { border-top-left-radius: 3px; }
+  .msg.agent .bubble pre {
+    font-family: var(--mono);
+    font-size: 12.5px;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    margin: 0;
+    line-height: 1.6;
+  }
 
   .domain-tag {
     display: inline-block;
@@ -552,8 +560,9 @@ HTML_PAGE = """<!DOCTYPE html>
   }
   .domain-SERIAL  { background: rgba(139,92,246,0.15); color: var(--purple); }
   .domain-QUERY   { background: rgba(59,130,246,0.15); color: var(--accent); }
-  .domain-JOIN    { background: rgba(34,197,94,0.15);  color: var(--green); }
-  .domain-UNKNOWN { background: rgba(100,116,139,0.15); color: var(--muted); }
+  .domain-JOIN      { background: rgba(34,197,94,0.15);   color: var(--green); }
+  .domain-MAPREDUCE { background: rgba(245,158,11,0.15);  color: var(--amber); }
+  .domain-UNKNOWN   { background: rgba(100,116,139,0.15); color: var(--muted); }
 
   .thinking {
     display: flex; align-items: center; gap: 6px;
@@ -791,6 +800,11 @@ HTML_PAGE = """<!DOCTYPE html>
       Sort by salary<br>Round Robin
     </button>
     <div class="sidebar-divider"></div>
+    <div class="sidebar-label" id="sb-mr-label">Map-Reduce Examples</div>
+    <button class="example-btn" onclick="send('Count how many times each word appears across documents d1..dn using n servers. Input: documents. Output: (word, count).')">
+      Word count<br>n servers
+    </button>
+    <div class="sidebar-divider"></div>
     <div class="sidebar-label" id="sb-join-label">Join Examples</div>
     <button class="example-btn" onclick="send('Даны таблицы Flowers(name, petal, size, color), size = 10^4 blocks и Sales(name, cname, amount, price), size = 10^6 blocks. 10 processors. Задача: выполнить Flowers Join Sales')">
       Flowers Join Sales<br>10^4 + 10^6 blocks
@@ -875,6 +889,7 @@ const I18N = {
     welcomeTitle:'DB Assistant Framework',
     welcomeSub:  'Задайте вопрос о стоимости параллельных запросов (Select, Sort, Join) или о сериализуемости расписаний транзакций. Выберите пример из боковой панели или введите свою задачу.',
     sbQuery:     'Примеры запросов',
+    sbMr:        'Map-Reduce',
     sbJoin:      'Примеры Join',
     sbSerial:    'Примеры расписаний',
     cancel:      'Отмена',
@@ -888,6 +903,7 @@ const I18N = {
     welcomeTitle:'DB Assistant Framework',
     welcomeSub:  'Ask about parallel query costs (Select, Sort, Join) or transaction schedule serializability. Pick an example from the sidebar or type your own task.',
     sbQuery:     'Query Examples',
+    sbMr:        'Map-Reduce',
     sbJoin:      'Join Examples',
     sbSerial:    'Serial Examples',
     cancel:      'Cancel',
@@ -927,6 +943,7 @@ function applyLang() {
   document.getElementById('welcome-title').textContent = t.welcomeTitle;
   document.getElementById('welcome-sub').textContent   = t.welcomeSub;
   document.getElementById('sb-query-label').textContent  = t.sbQuery;
+  document.getElementById('sb-mr-label').textContent     = t.sbMr;
   document.getElementById('sb-join-label').textContent   = t.sbJoin;
   document.getElementById('sb-serial-label').textContent = t.sbSerial;
   document.getElementById('btn-cancel').textContent    = t.cancel;
@@ -1031,7 +1048,7 @@ function appendMsg(role, text, domain) {
     bubble.appendChild(tag);
   }
 
-  const content = document.createElement('div');
+  const content = document.createElement(role === 'agent' ? 'pre' : 'div');
   content.textContent = text;
   bubble.appendChild(content);
 
