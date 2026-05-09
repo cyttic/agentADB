@@ -56,9 +56,10 @@ Schema:
     },
     {
       "type": "JOIN",
-      "input_a":   "<TableName or output_table from a previous SELECT>",
-      "input_b":   "<TableName>",
-      "join_field": "<the field both tables share>"
+      "input_a":      "<TableName or output_table of a previous op>",
+      "input_b":      "<TableName or output_table of a previous op>",
+      "output_table": "<unique snake_case name for this result, e.g. 'Flowers_Sales_join'>",
+      "join_field":   "<the field both tables share>"
     }
   ]
 }
@@ -71,6 +72,9 @@ Rules:
   - selectivity: if the task provides a value range [a,b] over V distinct values
     use (b-a)/V; otherwise use 1.0.
   - join_field: the natural join key (e.g. "name" when both tables have a "name" column).
+  - Every JOIN must have an output_table field.
+  - For chained joins (A⋈B)⋈C: the first JOIN's output_table becomes input_a or input_b
+    of the second JOIN — the names must match exactly.
 
 Task: """
 
@@ -159,33 +163,35 @@ class PipelineAgent:
         elapsed_parts = []
         total_parts   = []
 
-        for op in plan["operations"]:
+        for i, op in enumerate(plan["operations"]):
             if op["type"] == "SELECT":
+                self._assert_table_exists(tables, op["input_table"], op, i)
                 result = self._run_select(op, tables, p)
                 steps.append(result)
                 elapsed_parts.append(result["elapsed"])
                 total_parts.append(result["total"])
-                # Propagate virtual table for downstream ops
+                # Store filtered table for downstream ops
                 tables[op["output_table"]] = {
                     "blocks":       result["result_blocks"],
                     "distribution": tables[op["input_table"]]["distribution"],
                 }
 
             elif op["type"] == "JOIN":
+                self._assert_table_exists(tables, op["input_a"], op, i)
+                self._assert_table_exists(tables, op["input_b"], op, i)
                 result = self._run_join(op, tables, p)
                 steps.append(result)
                 elapsed_parts.append(result["elapsed"])
                 total_parts.append(result["total"])
-                # Propagate join result for possible chained joins
-                out = op.get("output_table")
-                if out:
-                    tables[out] = {
-                        "blocks": min(
-                            tables[op["input_a"]]["blocks"],
-                            tables[op["input_b"]]["blocks"],
-                        ),
-                        "distribution": "round_robin",
-                    }
+                # Always store join result — output_table is required for chained joins
+                out = op.get("output_table") or f"_join_{i}_result"
+                tables[out] = {
+                    "blocks": min(
+                        tables[op["input_a"]]["blocks"],
+                        tables[op["input_b"]]["blocks"],
+                    ),
+                    "distribution": "round_robin",
+                }
 
         if len(elapsed_parts) == 1:
             combined_elapsed = elapsed_parts[0]
@@ -195,6 +201,15 @@ class PipelineAgent:
             combined_total   = " + ".join(f"({t})" for t in total_parts)
 
         return steps, {"elapsed": combined_elapsed, "total": combined_total}
+
+    def _assert_table_exists(self, tables: dict, name: str, op: dict, step_idx: int):
+        if name not in tables:
+            known = list(tables.keys())
+            raise KeyError(
+                f"Step {step_idx} ({op['type']}) references '{name}' "
+                f"which does not exist. Known tables: {known}. "
+                f"Check that the producing JOIN has 'output_table': '{name}'."
+            )
 
     def _run_select(self, op: dict, tables: dict, p: int) -> dict:
         tname  = op["input_table"]

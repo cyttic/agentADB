@@ -77,6 +77,12 @@
       "task": "Даны таблицы Flowers(name, petal, size, color), size = 10^4 blocks и Sales(name, cname, amount, price), size = 10^6 blocks. Данные в таблице распределены по hash(name). 10 processors. Задача: выполнить Select Sales where 100<price<200",
       "answer" : "unknown",
       "difficulty" : "low"
+    },
+    {
+      "id":14,
+      "task": "Даны таблицы Flowers(name, petal, size, color), size = 10^4 blocks и Sales(name, cname, amount, price), size = 10^6 blocks и Person(id, name). Данные в таблицах Flowers и Sales распределены по hash(name), а в таблице Person — по id  . 10 processors. Задача: выполнить Join(Flowers, Sales) Join (Person)",
+      "answer" : "unknown",
+      "difficulty" : "high"
     }
   ]
 }
