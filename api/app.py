@@ -221,6 +221,19 @@ HTML_PAGE = """<!DOCTYPE html>
     --sans:     'DM Sans', sans-serif;
   }
 
+  [data-theme="light"] {
+    --bg:      #f1f5f9;
+    --surface: #ffffff;
+    --border:  #cbd5e1;
+    --accent:  #2563eb;
+    --purple:  #7c3aed;
+    --green:   #16a34a;
+    --amber:   #d97706;
+    --red:     #dc2626;
+    --text:    #1e293b;
+    --muted:   #64748b;
+  }
+
   * { box-sizing: border-box; margin: 0; padding: 0; }
 
   body {
@@ -371,30 +384,6 @@ HTML_PAGE = """<!DOCTYPE html>
   }
 
   /* Language toggle */
-  .lang-toggle {
-    display: flex;
-    background: var(--bg);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    overflow: hidden;
-  }
-  .lang-btn {
-    background: transparent;
-    border: none;
-    color: var(--muted);
-    font-family: var(--mono);
-    font-size: 11px;
-    font-weight: 600;
-    padding: 4px 10px;
-    cursor: pointer;
-    transition: all 0.15s;
-    letter-spacing: 0.3px;
-  }
-  .lang-btn.active {
-    background: var(--accent);
-    color: white;
-  }
-
   .github-link {
     display: flex;
     align-items: center;
@@ -439,6 +428,19 @@ HTML_PAGE = """<!DOCTYPE html>
     transition: all 0.2s;
   }
   .btn-reset:hover { border-color: var(--red); color: var(--red); }
+
+  .theme-btn {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    border-radius: 6px;
+    padding: 4px 8px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    transition: all 0.2s;
+  }
+  .theme-btn:hover { border-color: var(--accent); color: var(--text); }
 
   /* ── MAIN ── */
   main {
@@ -762,12 +764,6 @@ HTML_PAGE = """<!DOCTYPE html>
   </div>
   <div class="header-right">
 
-    <!-- Language toggle -->
-    <div class="lang-toggle">
-      <button class="lang-btn"        id="lang-ru" onclick="setLang('ru')">RU</button>
-      <button class="lang-btn active" id="lang-en" onclick="setLang('en')">EN</button>
-    </div>
-
     <!-- GitHub -->
     <a class="github-link" href="https://github.com/cyttic/agentADB" target="_blank" rel="noopener">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
@@ -780,6 +776,7 @@ HTML_PAGE = """<!DOCTYPE html>
       <div class="model-dot"></div>
       <span id="model-label">loading...</span>
     </div>
+    <button class="theme-btn" id="theme-btn" onclick="toggleTheme()" title="Toggle light/dark mode"></button>
     <button class="btn-reset" onclick="resetChat()" id="btn-reset">↺ Reset</button>
   </div>
 </header>
@@ -879,78 +876,6 @@ const MODELS = {
   local:     ['local'],
 };
 
-// ── Language ─────────────────────────────────────────────────
-let lang = localStorage.getItem('db_lang') || 'en';
-
-const I18N = {
-  ru: {
-    reset:       '↺ Сброс',
-    placeholder: 'Введите задачу или вопрос...',
-    thinking:    'думаю...',
-    welcomeTitle:'DB Assistant Framework',
-    welcomeSub:  'Задайте вопрос о стоимости параллельных запросов (Select, Sort, Join) или о сериализуемости расписаний транзакций. Выберите пример из боковой панели или введите свою задачу.',
-    sbQuery:     'Примеры запросов',
-    sbMr:        'Map-Reduce',
-    sbJoin:      'Примеры Join',
-    sbSerial:    'Примеры расписаний',
-    cancel:      'Отмена',
-    apply:       'Применить',
-    agreeBtn:    'Понятно — Войти в Framework',
-  },
-  en: {
-    reset:       '↺ Reset',
-    placeholder: 'Type a task or question...',
-    thinking:    'thinking...',
-    welcomeTitle:'DB Assistant Framework',
-    welcomeSub:  'Ask about parallel query costs (Select, Sort, Join) or transaction schedule serializability. Pick an example from the sidebar or type your own task.',
-    sbQuery:     'Query Examples',
-    sbMr:        'Map-Reduce',
-    sbJoin:      'Join Examples',
-    sbSerial:    'Serial Examples',
-    cancel:      'Cancel',
-    apply:       'Apply',
-    agreeBtn:    'I understand — Enter the Framework',
-  },
-};
-
-async function setLang(l) {
-  lang = l;
-  localStorage.setItem('db_lang', l);
-  document.getElementById('lang-ru').classList.toggle('active', l === 'ru');
-  document.getElementById('lang-en').classList.toggle('active', l === 'en');
-  applyLang();
-
-  // Tell the backend: change system prompt language + reset histories
-  await fetch('/language', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({lang: l}),
-  });
-
-  // Refresh the chat welcome screen in the new language
-  const msgs = document.getElementById('messages');
-  const t = I18N[l];
-  msgs.innerHTML = `
-    <div class="welcome" id="welcome-msg">
-      <h1 id="welcome-title">${t.welcomeTitle}</h1>
-      <p id="welcome-sub">${t.welcomeSub}</p>
-    </div>`;
-}
-
-function applyLang() {
-  const t = I18N[lang];
-  document.getElementById('btn-reset').textContent    = t.reset;
-  document.getElementById('input').placeholder        = t.placeholder;
-  document.getElementById('welcome-title').textContent = t.welcomeTitle;
-  document.getElementById('welcome-sub').textContent   = t.welcomeSub;
-  document.getElementById('sb-query-label').textContent  = t.sbQuery;
-  document.getElementById('sb-mr-label').textContent     = t.sbMr;
-  document.getElementById('sb-join-label').textContent   = t.sbJoin;
-  document.getElementById('sb-serial-label').textContent = t.sbSerial;
-  document.getElementById('btn-cancel').textContent    = t.cancel;
-  document.getElementById('btn-apply').textContent     = t.apply;
-  document.getElementById('btn-agree').textContent     = t.agreeBtn;
-}
 
 // ── Agreement ─────────────────────────────────────────────────
 function acceptAgreement() {
@@ -1063,7 +988,6 @@ let thinkCounter = 0;
 function appendThinking() {
   const id   = ++thinkCounter;
   const msgs = document.getElementById('messages');
-  const t    = I18N[lang].thinking;
   const div  = document.createElement('div');
   div.className = 'msg agent';
   div.id = `think-${id}`;
@@ -1072,7 +996,7 @@ function appendThinking() {
     <div class="bubble">
       <div class="thinking">
         <div class="thinking-dots"><span></span><span></span><span></span></div>
-        ${t}
+        thinking...
       </div>
     </div>`;
   msgs.appendChild(div);
@@ -1087,14 +1011,15 @@ function removeThinking(id) {
 
 // ── Reset ─────────────────────────────────────────────────────
 async function resetChat() {
-  await fetch('/reset', {method: 'POST'});
+  try { await fetch('/reset', {method: 'POST'}); } catch(e) {}
   const msgs = document.getElementById('messages');
-  const t    = I18N[lang];
-  msgs.innerHTML = `
-    <div class="welcome" id="welcome-msg">
-      <h1 id="welcome-title">${t.welcomeTitle}</h1>
-      <p id="welcome-sub">Conversation reset. ${t.welcomeSub}</p>
-    </div>`;
+  msgs.innerHTML = '';
+  const w = document.createElement('div');
+  w.className = 'welcome';
+  w.innerHTML = `
+    <h1>DB Assistant Framework</h1>
+    <p>Chat cleared. Ask about parallel query costs, Join cost, schedule serializability, or Map-Reduce.</p>`;
+  msgs.appendChild(w);
 }
 
 // ── Model Modal ───────────────────────────────────────────────
@@ -1131,10 +1056,34 @@ document.getElementById('modal').addEventListener('click', function(e) {
   if (e.target === this) closeModal();
 });
 
+// ── Theme ─────────────────────────────────────────────────────
+const SUN_ICON  = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>`;
+const MOON_ICON = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>`;
+
+let theme = localStorage.getItem('db_theme') || 'dark';
+
+function applyTheme(t) {
+  theme = t;
+  document.documentElement.setAttribute('data-theme', t);
+  const btn = document.getElementById('theme-btn');
+  if (t === 'dark') {
+    btn.innerHTML = SUN_ICON;
+    btn.title = 'Switch to light mode';
+  } else {
+    btn.innerHTML = MOON_ICON;
+    btn.title = 'Switch to dark mode';
+  }
+  localStorage.setItem('db_theme', t);
+}
+
+function toggleTheme() {
+  applyTheme(theme === 'dark' ? 'light' : 'dark');
+}
+
 // ── Init ──────────────────────────────────────────────────────
+applyTheme(theme);
 updateModelList();
 loadConfig();
-applyLang();
 checkAgreement();
 </script>
 </body>
