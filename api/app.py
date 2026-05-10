@@ -785,16 +785,16 @@ HTML_PAGE = """<!DOCTYPE html>
   <!-- SIDEBAR -->
   <aside>
     <div class="sidebar-label" id="sb-query-label">Query Examples</div>
-    <button class="example-btn" onclick="send('Дана таблица Flights(fid, date, from, to, seats). fid — ключ. 10,000 блоков. 10 процессоров. Round Robin. Найти: σ_{fid = 777}(Flights).')">
-      σ_{fid=777}(Flights)<br>Round Robin
+    <button class="example-btn" onclick="send('Table Flights(fid, date, from, to, seats). fid is the key. 10,000 blocks. 10 processors. Round Robin distribution. Find: σ(fid = 777)(Flights).')">
+      σ(fid=777)(Flights)<br>Round Robin
     </button>
-    <button class="example-btn" onclick="send('Дана таблица Students(sid, name, grade, year). sid — ключ. 5,000 блоков. 10 процессоров. hash(sid). Найти: σ_{sid = 42}(Students).')">
-      σ_{sid=42}(Students)<br>Hash(sid)
+    <button class="example-btn" onclick="send('Table Students(sid, name, grade, year). sid is the key. 5,000 blocks. 10 processors. hash(sid) distribution. Find: σ(sid = 42)(Students).')">
+      σ(sid=42)(Students)<br>Hash(sid)
     </button>
-    <button class="example-btn" onclick="send('Дана таблица Orders(oid, cid, date, amount). oid — ключ. 20,000 блоков. 10 процессоров. Range by oid. Найти: σ_{oid != 100}(Orders).')">
-      σ_{oid≠100}(Orders)<br>Range(oid)
+    <button class="example-btn" onclick="send('Table Orders(oid, cid, date, amount). oid is the key. 20,000 blocks. 10 processors. Range by oid distribution. Find: σ(oid != 100)(Orders).')">
+      σ(oid≠100)(Orders)<br>Range(oid)
     </button>
-    <button class="example-btn" onclick="send('Дана таблица Employees(eid, name, dept, salary). eid — ключ. 8,000 блоков. 10 процессоров. Round Robin. Выполнить сортировку по полю salary.')">
+    <button class="example-btn" onclick="send('Table Employees(eid, name, dept, salary). eid is the key. 8,000 blocks. 10 processors. Round Robin distribution. Perform sort by field salary.')">
       Sort by salary<br>Round Robin
     </button>
     <div class="sidebar-divider"></div>
@@ -804,7 +804,7 @@ HTML_PAGE = """<!DOCTYPE html>
     </button>
     <div class="sidebar-divider"></div>
     <div class="sidebar-label" id="sb-join-label">Join Examples</div>
-    <button class="example-btn" onclick="send('Даны таблицы Flowers(name, petal, size, color), size = 10^4 blocks и Sales(name, cname, amount, price), size = 10^6 blocks. 10 processors. Задача: выполнить Flowers Join Sales')">
+    <button class="example-btn" onclick="send('Tables: Flowers(name, petal, size, color) — 10^4 blocks, Sales(name, cname, amount, price) — 10^6 blocks. 10 processors. Perform Flowers Join Sales.')">
       Flowers Join Sales<br>10^4 + 10^6 blocks
     </button>
     <div class="sidebar-divider"></div>

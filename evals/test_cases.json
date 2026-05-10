@@ -55,53 +55,116 @@
       "difficulty": "low"
     },
     {
-      "id":10,
+      "id": 10,
       "task": "Даны таблицы Flowers(name, petal, size, color), size = 10^4 blocks и Sales(name, cname, amount, price), size = 10^6 blocks. 10 processors. Задача: выполнить Flowers Join Sales",
-      "answer" : "E = (10^3 + 10^5)*(td+ ts) + (10^3 + 10^5)*(td+ ts) + (10^3 + 10^5)*ts, T = 10*E",
-      "difficulty" : "low"
+      "answer": "E = (10^3 + 10^5)*(td+ ts) + (10^3 + 10^5)*(td+ ts) + (10^3 + 10^5)*ts, T = 10*E",
+      "difficulty": "low"
     },
     {
-      "id":11,
+      "id": 11,
       "task": "Даны таблицы Flowers(name, petal, size, color), size = 10^4 blocks и Sales(name, cname, amount, price), size = 10^6 blocks. Данные в таблице распределены по range(name). 10 processors. Задача: выполнить Flowers Join Sales",
-      "answer" : "E = 3*(10^3 + 10^5)td, T = 10*E",
-      "difficulty" : "low"
+      "answer": "E = 3*(10^3 + 10^5)td, T = 10*E",
+      "difficulty": "low"
     },
     {
-      "id":12,
+      "id": 12,
       "task": "Даны таблицы Flowers(name, petal, size, color), size = 10^4 blocks и Sales(name, cname, amount, price), size = 10^6 blocks. Данные в таблице распределены по hash(name). 10 processors. Задача: выполнить Select Join for tables Flowers and Sales where 100<price<200",
-      "answer" : "unknown",
-      "difficulty" : "high"
+      "answer": "unknown",
+      "difficulty": "high"
     },
     {
-      "id":13,
+      "id": 13,
       "task": "Даны таблицы Flowers(name, petal, size, color), size = 10^4 blocks и Sales(name, cname, amount, price), size = 10^6 blocks. Данные в таблице распределены по hash(name). 10 processors. Задача: выполнить Select Sales where 100<price<200",
-      "answer" : "unknown",
-      "difficulty" : "low"
+      "answer": "unknown",
+      "difficulty": "low"
     },
     {
-      "id":14,
+      "id": 14,
       "task": "Даны таблицы Flowers(name, petal, size, color), size = 10^4 blocks и Sales(name, cname, amount, price), size = 10^6 blocks и Person(id, name). Данные в таблицах Flowers и Sales распределены по hash(name), а в таблице Person — по id  . 10 processors. Задача: выполнить Join(Flowers, Sales) Join (Person)",
-      "answer" : "unknown",
-      "difficulty" : "high"
+      "answer": "unknown",
+      "difficulty": "high"
     },
     {
-      "id":15,
+      "id": 15,
       "task": "Given a parallel database with 10 processors, block size of 2000 bytes, disk access cost td, and block transfer cost between processors ts. The following relations are stored in the system: Customers(cid, cname, city), Orders(pid, cid, date, quantity), Products(pid, pname, price). Orders.cid and Orders.pid are foreign keys. The size of every field in every relation is 10 bytes. Relation Customers contains 10^6 records. Relation Products contains 10^6 records. Relation Orders contains 10^8 records. Field Orders.quantity has 100 distinct values in the range 1..100 with uniform distribution. Field pid has 1000 distinct values with uniform distribution in both Products and Orders. Relations Customers and Products are distributed among the processors using the round-robin method. Find all customers (cid) who bought products costing more than 100 shekels in quantities between 50 and 100 units in a single order, when relation Orders is distributed among processors using hash(pid) partitioning. Propose an algorithm for solving the query and calculate running times (parallel time and total time). Write the query in relational algebra (RA).",
-      "answer" : "unknown",
-      "difficulty" : "very high",
-      "notion":"HW1 Task 3c"      
+      "answer": "unknown",
+      "difficulty": "very high",
+      "notion": "HW1 Task 3c"
     },
     {
-      "id":16,
+      "id": 16,
       "task": "Посчитать сколько раз слова встречаются в тексте документов. Дано d1,d2,...,dn  документов. ",
-      "answer" : "unknown",
-      "difficulty" : "low"      
+      "answer": "unknown",
+      "difficulty": "low"
     },
     {
-      "id":17,
+      "id": 17,
       "task": "Найти в каких документах встречаюься слова. Дано d1,d2,...,dn  документов",
-      "answer" : "unknown",
-      "difficulty" : "low"      
+      "answer": "unknown",
+      "difficulty": "low"
+    },
+    {
+      "id": 18,
+      "task": "Determine whether the following schedule is conflict-serializable. Prove or disprove. Schedule: w1(A), w2(A), r3(A), w3(B), r1(B), w4(B), r2(B), r4(A), w2(B), r3(B)",
+      "answer": "unknown",
+      "difficulty": "medium",
+      "notion": "HW1 Task 1a"
+    },
+    {
+      "id": 19,
+      "task": "Determine whether the following schedule is conflict-serializable. Prove or disprove. Schedule: w1(A), r2(A), w2(B), r3(B), w3(C), r1(C), w1(B), r2(B), w2(A), r3(A)",
+      "answer": "unknown",
+      "difficulty": "medium",
+      "notion": "HW1 Task 1b"
+    },
+    {
+      "id": 20,
+      "task": "Determine whether the following schedule is view-serializable. Prove or disprove. Schedule: w4(B), r2(B), r1(B), w1(A), w2(B), r3(A), w3(C), r1(C), w4(A), r2(A), w2(C), r4(C), w3(B)",
+      "answer": "unknown",
+      "difficulty": "medium",
+      "notion": "HW1 Task 2a"
+    },
+    {
+      "id": 21,
+      "task": "Determine whether the following schedule is view-serializable. Prove or disprove. Schedule: w1(A), w2(A), w3(B), w4(B), r1(B), r2(B), r3(A), r4(A)",
+      "answer": "unknown",
+      "difficulty": "medium",
+      "notion": "HW1 Task 2b"
+    },
+    {
+      "id": 22,
+      "task": "Given a parallel database with 10 processors, block size of 2000 bytes, disk access cost td, and block transfer cost ts. Relations: Customers(cid, cname, city), Orders(pid, cid, date, quantity), Products(pid, pname, price). Orders.cid and Orders.pid are foreign keys. Every field is 10 bytes. Customers has 10^6 records, Products has 10^6 records, Orders has 10^8 records. Orders.quantity has 100 distinct values in range 1..100 (uniform). pid has 1000 distinct values (uniform) in both Products and Orders. Customers and Products are distributed using round-robin. Find all customers (cid) who bought products costing more than 100 shekels in quantities between 50 and 100 units in a single order, when relation Orders is distributed using round-robin partitioning. Propose an algorithm, write the query in RA, and calculate parallel time and total time.",
+      "answer": "unknown",
+      "difficulty": "high",
+      "notion": "HW1 Task 3a"
+    },
+    {
+      "id": 23,
+      "task": "Given a parallel database with 10 processors, block size of 2000 bytes, disk access cost td, and block transfer cost ts. Relations: Customers(cid, cname, city), Orders(pid, cid, date, quantity), Products(pid, pname, price). Orders.cid and Orders.pid are foreign keys. Every field is 10 bytes. Customers has 10^6 records, Products has 10^6 records, Orders has 10^8 records. Orders.quantity has 100 distinct values in range 1..100 (uniform). pid has 1000 distinct values (uniform) in both Products and Orders. Customers and Products are distributed using round-robin. Find all customers (cid) who bought products costing more than 100 shekels in quantities between 50 and 100 units in a single order, when relation Orders is distributed using range partitioning on the field quantity. Propose an algorithm, write the query in RA, and calculate parallel time and total time.",
+      "answer": "unknown",
+      "difficulty": "high",
+      "notion": "HW1 Task 3b"
+    },
+    {
+      "id": 24,
+      "task": "Given a parallel database with 10 processors, block size of 2000 bytes, disk access cost td, and block transfer cost ts. Relations: Customers(cid, cname, city), Orders(pid, cid, date, quantity), Products(pid, pname, price). Orders.cid and Orders.pid are foreign keys. Every field is 10 bytes. Customers has 10^6 records, Products has 10^6 records, Orders has 10^8 records. Orders.quantity has 100 distinct values in range 1..100 (uniform). pid has 1000 distinct values (uniform) in both Products and Orders. Customers and Products are distributed using round-robin. Find all customers (cid) who bought products costing more than 100 shekels in quantities between 50 and 100 units in a single order, when relation Orders is distributed using hash(pid) partitioning. Propose an algorithm, write the query in RA, and calculate parallel time and total time.",
+      "answer": "unknown",
+      "difficulty": "very high",
+      "notion": "HW1 Task 3c"
+    },
+    {
+      "id": 25,
+      "task": "Given a parallel database with 10 processors, block size of 2000 bytes, disk access cost td, and block transfer cost ts. Relations: Customers(cid, cname, city), Orders(pid, cid, date, quantity), Products(pid, pname, price). Orders.cid and Orders.pid are foreign keys. Every field is 10 bytes. Customers has 10^6 records, Products has 10^6 records, Orders has 10^8 records. Orders.quantity has 100 distinct values in range 1..100 (uniform). pid has 1000 distinct values (uniform) in both Products and Orders. All relations are distributed using round-robin. Find the names (cname) of all customers who ordered 91 or more units of the product with pid=650. Propose an algorithm, write the query in RA, and calculate parallel time and total time.",
+      "answer": "unknown",
+      "difficulty": "high",
+      "notion": "HW1 Task 3d"
+    },
+    {
+      "id": 26,
+      "task": "Using the same database as in the previous tasks (Customers(cid, cname, city), Orders(pid, cid, date, quantity), Products(pid, pname, price)), describe in pseudocode the map() and reduce() functions for the MapReduce method to find all customers who ordered the product with pid=650. The output should include the customer name (cname) and the quantity of the product ordered.",
+      "answer": "unknown",
+      "difficulty": "medium",
+      "notion": "HW1 Task 4"
     }
   ]
 }
