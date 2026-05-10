@@ -206,11 +206,11 @@ LANGUAGE RULE: {_lang_rule}
 After analysis, ALWAYS end your response with this block:
 
 ---
-📋 Рёбра графа: <list of edges like T1→T2, or "(нет)">
-🔄 Цикл: <Да / Нет>
-🏷️  Вердикт: <CONFLICT-SERIALIZABLE / NOT CONFLICT-SERIALIZABLE / VIEW-SERIALIZABLE / NOT VIEW-SERIALIZABLE>
-📎 Причина: <one sentence>
-✅ Серийный порядок: <T1 → T2 → ... or "(нет — цикл)">
+📋 Graph edges:    <list of edges like T1→T2, or "(none)">
+🔄 Cycle:          <Yes / No>
+🏷️  Verdict:       <CONFLICT-SERIALIZABLE / NOT CONFLICT-SERIALIZABLE / VIEW-SERIALIZABLE / NOT VIEW-SERIALIZABLE>
+📎 Reason:         <one sentence>
+✅ Serial order:   <T1 → T2 → ... or "(none — cycle)">
 ---
 
 NEVER skip this block. NEVER guess results — always call tools first.
@@ -229,7 +229,7 @@ class SerialAgentState(TypedDict):
 #  BUILD AGENT
 # ══════════════════════════════════════════════════════════════
 
-_agent_lang: str = "ru"
+_agent_lang: str = "en"
 
 def set_agent_lang(lang: str):
     global _agent_lang

@@ -166,7 +166,7 @@ async def reset():
     return {"status": "reset", "message": "Conversation history cleared"}
 
 
-_current_lang: str = "ru"
+_current_lang: str = "en"
 
 class LangRequest(BaseModel):
     lang: str   # "ru" or "en"
@@ -181,9 +181,10 @@ async def set_language(req: LangRequest):
     _serial_mod.set_agent_lang(req.lang)
     _query_mod.set_agent_lang(req.lang)
     # Reset histories so agents start fresh in the new language
-    _orchestrator.serial_history   = []
-    _orchestrator.query_history    = []
-    _orchestrator.query_db_context = {}
+    _orchestrator.serial_history              = []
+    _orchestrator.query_history              = []
+    _orchestrator.query_db_context           = {}
+    _orchestrator.mapreduce_agent.history    = []
     return {"status": "ok", "lang": req.lang}
 
 
@@ -738,11 +739,11 @@ HTML_PAGE = """<!DOCTYPE html>
       </div>
       <div class="agreement-feature">
         <div class="dot" style="background:var(--green)"></div>
-        <span><strong>Any Schema, Any Language</strong> — describe tables in Russian or English; the framework extracts the schema automatically</span>
+        <span><strong>Map-Reduce Design</strong> — generates visualization table, chain description, and map()/reduce() pseudocode for any task</span>
       </div>
       <div class="agreement-feature">
         <div class="dot" style="background:var(--amber)"></div>
-        <span><strong>LLM-powered</strong> — uses GPT-4o / Claude / local models; all cost formulas are computed deterministically by Python tools</span>
+        <span><strong>LLM-powered</strong> — works with GPT-4o, Claude, Ollama, or local models; all cost formulas are computed deterministically by Python tools</span>
       </div>
     </div>
     <p class="muted">
@@ -763,8 +764,8 @@ HTML_PAGE = """<!DOCTYPE html>
 
     <!-- Language toggle -->
     <div class="lang-toggle">
-      <button class="lang-btn active" id="lang-ru" onclick="setLang('ru')">RU</button>
-      <button class="lang-btn"        id="lang-en" onclick="setLang('en')">EN</button>
+      <button class="lang-btn"        id="lang-ru" onclick="setLang('ru')">RU</button>
+      <button class="lang-btn active" id="lang-en" onclick="setLang('en')">EN</button>
     </div>
 
     <!-- GitHub -->
@@ -831,7 +832,7 @@ HTML_PAGE = """<!DOCTYPE html>
       </div>
     </div>
     <div class="input-area">
-      <textarea id="input" placeholder="Type a task or question..." rows="1"
+      <textarea id="input" placeholder="Type a task or question…" rows="1"
         onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
       <button id="send" onclick="sendMessage()">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
@@ -879,7 +880,7 @@ const MODELS = {
 };
 
 // ── Language ─────────────────────────────────────────────────
-let lang = localStorage.getItem('db_lang') || 'ru';
+let lang = localStorage.getItem('db_lang') || 'en';
 
 const I18N = {
   ru: {
@@ -1044,7 +1045,7 @@ function appendMsg(role, text, domain) {
   if (role === 'agent' && domain) {
     const tag = document.createElement('div');
     tag.className = `domain-tag domain-${domain}`;
-    tag.textContent = domain;
+    tag.textContent = `Agent called [${domain}]`;
     bubble.appendChild(tag);
   }
 

@@ -1,18 +1,18 @@
 """
-View-Serializability Checker — полный алгоритм
+View-Serializability Checker — full algorithm
 
-Этапы:
-  1. Граф предшествования ацикличен?
-     → ДА: conflict-serial → VIEW-SERIAL, топосорт даёт серийный порядок.
-  2. Цикл + нет blind writes?
+Steps:
+  1. Is the precedence graph acyclic?
+     → YES: conflict-serial → VIEW-SERIAL; topological sort gives serial order.
+  2. Cycle + no blind writes?
      → NOT VIEW-SERIALIZABLE (view-serial ⟺ conflict-serial).
-  3. Цикл + есть blind writes?
-     → Перебор всех n! серийных перестановок, проверка трёх view-условий:
-        (a) Initial read  — кто читает начальное значение
-        (b) Reads-from    — кто чьё значение читает
-        (c) Final write   — кто последним пишет каждый объект
+  3. Cycle + blind writes?
+     → Enumerate all n! serial permutations, check three view conditions:
+        (a) Initial read  — who reads the initial value
+        (b) Reads-from    — who reads whose written value
+        (c) Final write   — who writes each object last
 
-Формат входных данных:
+Input format:
     ('r'|'w', transaction_id, object_name)
 """
 
@@ -21,12 +21,12 @@ from itertools import permutations
 
 def view_signature(schedule):
     """
-    Вычисляет «отпечаток» расписания из трёх view-условий:
-      - initial_reads : frozenset {(tid, obj)} — кто читает начальное значение
-      - reads_from    : frozenset {(writer, reader, obj)} — кто чьё значение читает
-      - final_writes  : frozenset {(tid, obj)} — кто последним пишет каждый объект
+    Compute the view-signature of a schedule from three view conditions:
+      - initial_reads : frozenset {(tid, obj)} — who reads the initial value
+      - reads_from    : frozenset {(writer, reader, obj)} — who reads whose value
+      - final_writes  : frozenset {(tid, obj)} — who writes each object last
     """
-    last_writer = {}          # obj -> tid последней записи
+    last_writer = {}          # obj -> tid of last writer
     read_before_write = defaultdict(set)
     initial_reads = set()
     reads_from = set()
@@ -41,7 +41,7 @@ def view_signature(schedule):
         elif op_type == 'w':
             last_writer[obj] = tid
 
-    final_writes = frozenset(last_writer.items())   # {(obj, tid)} → удобнее (tid,obj)
+    final_writes = frozenset(last_writer.items())   # {(obj, tid)} → reorder to (tid, obj)
     final_writes = frozenset((tid, obj) for obj, tid in last_writer.items())
 
     return (
@@ -52,7 +52,7 @@ def view_signature(schedule):
 
 
 def build_serial(transactions_order, ops_by_tid):
-    """Строит серийное расписание: конкатенация операций по заданному порядку."""
+    """Build a serial schedule: concatenate operations in the given transaction order."""
     result = []
     for tid in transactions_order:
         result.extend(ops_by_tid[tid])
@@ -61,9 +61,9 @@ def build_serial(transactions_order, ops_by_tid):
 
 def find_view_equivalent_serial(schedule, transactions):
     """
-    Перебирает все n! серийных перестановок транзакций.
-    Возвращает (True, serial_schedule, order) если найден view-эквивалент,
-    иначе (False, None, None).
+    Enumerate all n! serial permutations of transactions.
+    Returns (True, serial_schedule, order) if a view-equivalent serial is found,
+    otherwise (False, None, None).
     """
     sig = view_signature(schedule)
 
@@ -81,7 +81,7 @@ def find_view_equivalent_serial(schedule, transactions):
 
 def analyze(schedule):
     """
-    Возвращает dict с полным анализом расписания.
+    Returns a dict with the full schedule analysis.
     """
     transactions = sorted({op[1] for op in schedule})
 
@@ -134,7 +134,7 @@ def analyze(schedule):
         while queue:
             v = queue.popleft()
             order.append(v)
-            for u in sorted(adj[v]):       # sorted для детерминизма
+            for u in sorted(adj[v]):       # sorted for determinism
                 in_degree[u] -= 1
                 if in_degree[u] == 0:
                     queue.append(u)
@@ -157,30 +157,30 @@ def analyze(schedule):
             serial_schedule.extend(ops_by_tid[tid])
 
     # --- 5. Применяем правила ---
-    serial_order = topo_order  # может быть переопределён ниже
+    serial_order = topo_order  # may be overridden below
 
     if not cycle_found:
         verdict = "VIEW-SERIALIZABLE"
-        reason = "Граф предшествования ацикличен → conflict-serial → view-serial"
+        reason = "Precedence graph is acyclic → conflict-serial → view-serial"
 
     elif not has_blind_writes:
         verdict = "NOT VIEW-SERIALIZABLE"
-        reason = ("Граф имеет цикл и нет blind writes → "
-                  "view-serial ⟺ conflict-serial → точно НЕ view-serial")
+        reason = ("Precedence graph has a cycle and no blind writes → "
+                  "view-serial ⟺ conflict-serial → definitively NOT view-serial")
 
     else:
-        # Цикл + blind writes → полный перебор n! с проверкой view-условий
+        # Cycle + blind writes → enumerate all n! permutations
         found, serial_schedule, serial_order = find_view_equivalent_serial(
             schedule, transactions
         )
         if found:
             verdict = "VIEW-SERIALIZABLE"
-            reason = (f"Граф имеет цикл + есть blind writes → "
-                      f"полный перебор нашёл view-эквивалентное серийное расписание")
+            reason = ("Precedence graph has a cycle + blind writes → "
+                      "full enumeration found a view-equivalent serial schedule")
         else:
             verdict = "NOT VIEW-SERIALIZABLE"
-            reason = ("Граф имеет цикл + есть blind writes → "
-                      "полный перебор не нашёл ни одного view-эквивалентного серийного расписания")
+            reason = ("Precedence graph has a cycle + blind writes → "
+                      "full enumeration found no view-equivalent serial schedule")
 
     return {
         "verdict": verdict,
@@ -211,7 +211,7 @@ def h(text, *codes):
 
 def print_report(schedule):
     print(h("=" * 60, DIM))
-    print(h("РАСПИСАНИЕ:", BOLD, CYAN))
+    print(h("SCHEDULE:", BOLD, CYAN))
     for i, op in enumerate(schedule):
         kind = "read " if op[0] == 'r' else "write"
         color = YELLOW if op[0] == 'r' else MAGENTA
@@ -219,30 +219,30 @@ def print_report(schedule):
 
     r = analyze(schedule)
     print()
-    print(h("АНАЛИЗ:", BOLD, CYAN))
-    print(f"  Транзакции   : {['T'+str(t) for t in r['transactions']]}")
-    print(f"  Рёбра графа  : {['T'+str(a)+'→T'+str(b) for a,b in r['edges']] or '(нет)'}")
-    cycle_val = h('Да', RED, BOLD) if r['cycle'] else h('Нет', GREEN, BOLD)
-    print(f"  Цикл в графе : {cycle_val}")
+    print(h("ANALYSIS:", BOLD, CYAN))
+    print(f"  Transactions : {['T'+str(t) for t in r['transactions']]}")
+    print(f"  Graph edges  : {['T'+str(a)+'→T'+str(b) for a,b in r['edges']] or '(none)'}")
+    cycle_val = h('Yes', RED, BOLD) if r['cycle'] else h('No', GREEN, BOLD)
+    print(f"  Cycle        : {cycle_val}")
     bw = ', '.join(h('T'+str(t), YELLOW, BOLD) for t in r['blind_writes'])
-    print(f"  Blind writes : {bw or '(нет)'}")
-    print(f"  Reads-from   : {[f'T{w}→T{rd}({o})' for w,rd,o in r['reads_from']] or '(нет)'}")
+    print(f"  Blind writes : {bw or '(none)'}")
+    print(f"  Reads-from   : {[f'T{w}→T{rd}({o})' for w,rd,o in r['reads_from']] or '(none)'}")
     print()
 
     if r['verdict'].startswith("VIEW-SERIAL"):
         verdict_str = h(r['verdict'], GREEN, BOLD)
     else:
         verdict_str = h(r['verdict'], RED, BOLD)
-    print(f"{h('ВЕРДИКТ', BOLD)} : {verdict_str}")
-    print(f"{h('ПРИЧИНА', BOLD)} : {r['reason']}")
+    print(f"{h('VERDICT', BOLD)} : {verdict_str}")
+    print(f"{h('REASON ', BOLD)} : {r['reason']}")
 
     if r['serial_schedule'] is not None:
         s = r['serial_schedule']
         print()
         order_str = h(' → '.join('T'+str(t) for t in r['serial_order']), GREEN, BOLD)
-        print(f"  {h('Эквивалентный серийный порядок:', BOLD, GREEN)} {order_str}")
+        print(f"  {h('Equivalent serial order:', BOLD, GREEN)} {order_str}")
         print()
-        print(h("СЕРИЙНОЕ РАСПИСАНИЕ:", BOLD, CYAN))
+        print(h("SERIAL SCHEDULE:", BOLD, CYAN))
         for i, op in enumerate(s):
             kind = "read " if op[0] == 'r' else "write"
             color = YELLOW if op[0] == 'r' else MAGENTA
@@ -250,16 +250,16 @@ def print_report(schedule):
 
         rs = analyze(s)
         print()
-        print(h("АНАЛИЗ СЕРИЙНОГО РАСПИСАНИЯ:", BOLD, CYAN))
-        print(f"  Транзакции   : {['T'+str(t) for t in rs['transactions']]}")
-        print(f"  Рёбра графа  : {['T'+str(a)+'→T'+str(b) for a,b in rs['edges']] or '(нет)'}")
-        cycle_val2 = h('Да', RED, BOLD) if rs['cycle'] else h('Нет', GREEN, BOLD)
-        print(f"  Цикл в графе : {cycle_val2}")
+        print(h("ANALYSIS OF SERIAL SCHEDULE:", BOLD, CYAN))
+        print(f"  Transactions : {['T'+str(t) for t in rs['transactions']]}")
+        print(f"  Graph edges  : {['T'+str(a)+'→T'+str(b) for a,b in rs['edges']] or '(none)'}")
+        cycle_val2 = h('Yes', RED, BOLD) if rs['cycle'] else h('No', GREEN, BOLD)
+        print(f"  Cycle        : {cycle_val2}")
         bw2 = ', '.join(h('T'+str(t), YELLOW, BOLD) for t in rs['blind_writes'])
-        print(f"  Blind writes : {bw2 or '(нет)'}")
-        print(f"  Reads-from   : {[f'T{w}→T{rd}({o})' for w,rd,o in rs['reads_from']] or '(нет)'}")
+        print(f"  Blind writes : {bw2 or '(none)'}")
+        print(f"  Reads-from   : {[f'T{w}→T{rd}({o})' for w,rd,o in rs['reads_from']] or '(none)'}")
         print()
-        print(f"  {h('View-условия (должны совпадать с исходным):', BOLD)}")
+        print(f"  {h('View conditions (must match original):', BOLD)}")
         sig_orig = view_signature(schedule)
         sig_ser  = view_signature(s)
         labels = ["Initial reads", "Reads-from   ", "Final writes "]
@@ -273,11 +273,11 @@ def print_report(schedule):
     print(h("=" * 60, DIM))
 
 
-# ---------- примеры ----------
+# ---------- examples ----------
 
 if __name__ == "__main__":
 
-    # Пример из вопроса
+    # Example 1
     schedule1 = [
         ('r', 2, 'B'),
         ('w', 2, 'A'),
@@ -288,9 +288,7 @@ if __name__ == "__main__":
         ('w', 3, 'B'),
     ]
 
-    # Классический view-serial но НЕ conflict-serial (blind write спасает)
-    # T1: w(A); T2: w(A), w(B); T3: r(A), w(B)
-    # view-equiv T1 T2 T3 если T3 читает начальное A и T2 делает last write B
+    # Example 2: view-serial but NOT conflict-serial (blind write saves it)
     schedule2 = [
         ('w', 1, 'A'),
         ('w', 2, 'A'),
@@ -299,7 +297,7 @@ if __name__ == "__main__":
         ('w', 3, 'B'),
     ]
 
-    # Точно НЕ view-serial: цикл + нет blind writes
+    # Example 3: definitively NOT view-serial (cycle + no blind writes)
     schedule3 = [
         ('r', 1, 'A'),
         ('w', 2, 'A'),

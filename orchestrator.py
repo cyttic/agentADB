@@ -209,10 +209,10 @@ class Orchestrator:
 
         else:
             return (
-                "Я специализируюсь на четырёх темах:\n"
-                "  • Сериализуемость расписаний транзакций\n"
-                "  • Стоимость параллельных запросов (Select, Sort)\n"
-                "  • Стоимость параллельного Join\n"
-                "  • Алгоритмы Map-Reduce\n"
-                "Пожалуйста, уточните ваш вопрос."
+                "I specialise in four topics:\n"
+                "  • Transaction schedule serializability\n"
+                "  • Parallel query cost (Select, Sort)\n"
+                "  • Parallel Join cost\n"
+                "  • Map-Reduce algorithms\n"
+                "Please clarify your question."
             )

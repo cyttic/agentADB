@@ -109,7 +109,7 @@ def analyze_schedule(schedule):
 
     # ── Print schedule ───────────────────────────────────
     print(h("=" * 60, DIM))
-    print(h("РАСПИСАНИЕ:", BOLD, CYAN))
+    print(h("SCHEDULE:", BOLD, CYAN))
     for i, op in enumerate(schedule):
         kind  = "read " if op[0] == 'r' else "write"
         color = YELLOW if op[0] == 'r' else MAGENTA
@@ -117,42 +117,42 @@ def analyze_schedule(schedule):
 
     # ── Print conflict analysis ──────────────────────────
     print()
-    print(h("КОНФЛИКТНЫЙ АНАЛИЗ:", BOLD, CYAN))
+    print(h("CONFLICT ANALYSIS:", BOLD, CYAN))
     if explanation:
         for op1, op2, t1, t2 in explanation:
             kind1 = h("read " if op1[0]=='r' else "write", YELLOW if op1[0]=='r' else MAGENTA)
             kind2 = h("read " if op2[0]=='r' else "write", YELLOW if op2[0]=='r' else MAGENTA)
             print(
-                f"  Конфликт: {h('T'+str(t1), BOLD)}:{kind1}({op1[2]})  ✕  "
+                f"  Conflict: {h('T'+str(t1), BOLD)}:{kind1}({op1[2]})  ✕  "
                 f"{h('T'+str(t2), BOLD)}:{kind2}({op2[2]})"
-                f"  →  ребро {h('T'+str(t1)+'→T'+str(t2), BOLD, CYAN)}"
+                f"  →  edge {h('T'+str(t1)+'→T'+str(t2), BOLD, CYAN)}"
             )
     else:
-        print(f"  {h('(конфликтов нет)', DIM)}")
+        print(f"  {h('(no conflicts)', DIM)}")
 
     # ── Print precedence graph ───────────────────────────
     print()
-    print(h("ГРАФ ПРЕДШЕСТВОВАНИЯ:", BOLD, CYAN))
+    print(h("PRECEDENCE GRAPH:", BOLD, CYAN))
     if edges:
         for t1, t2 in edges:
             print(f"  {h('T'+str(t1), BOLD)} → {h('T'+str(t2), BOLD)}")
     else:
-        print(f"  {h('(нет рёбер)', DIM)}")
+        print(f"  {h('(no edges)', DIM)}")
 
-    cycle_val = h('Да', RED, BOLD) if cycle_found else h('Нет', GREEN, BOLD)
-    print(f"  Цикл в графе : {cycle_val}")
+    cycle_val = h('Yes', RED, BOLD) if cycle_found else h('No', GREEN, BOLD)
+    print(f"  Cycle in graph : {cycle_val}")
     if cycle_path:
         path_str = " → ".join(h('T'+str(t), BOLD, RED) for t in cycle_path)
-        print(f"  Путь цикла   : {path_str}")
+        print(f"  Cycle path     : {path_str}")
 
     # ── Verdict ──────────────────────────────────────────
     print()
     if cycle_found:
         verdict_str = h("NOT CONFLICT-SERIALIZABLE", RED, BOLD)
-        reason      = "Граф предшествования содержит цикл → расписание не конфликт-сериализуемо"
+        reason      = "Precedence graph contains a cycle → schedule is NOT conflict-serializable"
     else:
         verdict_str = h("CONFLICT-SERIALIZABLE", GREEN, BOLD)
-        reason      = "Граф предшествования ацикличен → расписание конфликт-сериализуемо"
+        reason      = "Precedence graph is acyclic → schedule IS conflict-serializable"
 
         # Topological order
         from collections import deque
@@ -171,10 +171,10 @@ def analyze_schedule(schedule):
                     queue.append(u)
 
         order_str = h(' → '.join('T'+str(t) for t in topo), GREEN, BOLD)
-        print(f"  {h('Эквивалентный серийный порядок:', BOLD, GREEN)} {order_str}")
+        print(f"  {h('Equivalent serial order:', BOLD, GREEN)} {order_str}")
 
-    print(f"{h('ВЕРДИКТ', BOLD)} : {verdict_str}")
-    print(f"{h('ПРИЧИНА', BOLD)} : {reason}")
+    print(f"{h('VERDICT', BOLD)} : {verdict_str}")
+    print(f"{h('REASON ', BOLD)} : {reason}")
     print(h("=" * 60, DIM))
 
 

@@ -311,7 +311,7 @@ Elapsed = <symbolic sum>
 Total   = p * Elapsed = <symbolic>
 ---
 
-LANGUAGE RULE: Always respond in Russian, regardless of input language.
+LANGUAGE RULE: Always respond in English, regardless of input language.
 """
 
 

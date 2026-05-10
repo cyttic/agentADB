@@ -486,12 +486,12 @@ def build_system_prompt(lang: str = "ru") -> str:
         "After computing costs, present the answer in this structure:\n\n"
         "1. Relational Algebra expression (using \u03c3 \u03c0 \u22c8 \u2014 no LaTeX).\n\n"
         "2. For EACH operation (Select / Sort / Join), a block:\n"
-        "   \u0428\u0430\u0433 N \u2014 <operation name>\n"
-        "   \u041e\u043f\u0435\u0440\u0430\u0446\u0438\u044f:      <RA expression for this step>\n"
-        "   \u0410\u043b\u0433\u043e\u0440\u0438\u0442\u043c:      <alg2 / alg3 / alg1 / alg2-sort>\n"
-        "   \u041f\u0440\u0438\u0447\u0438\u043d\u0430:       <one-line reason from decide_* tool>\n"
-        "   \u0411\u043b\u043e\u043a\u043e\u0432 \u0432\u0441\u0435\u0433\u043e:  <B>\n"
-        "   \u0411\u043b\u043e\u043a\u043e\u0432/\u0441\u0435\u0440\u0432\u0435\u0440: <B/p = bs>\n"
+        "   Step N \u2014 <operation name>\n"
+        "   Operation:     <RA expression for this step>\n"
+        "   Algorithm:     <alg2 / alg3 / alg1 / alg2-sort>\n"
+        "   Reason:        <one-line reason from decide_* tool>\n"
+        "   Total blocks:  <B>\n"
+        "   Blocks/server: <B/p = bs>\n"
         "   Elapsed:       <value from tool \u2014 copy EXACTLY>\n"
         "   Total:         <value from tool \u2014 copy EXACTLY>\n\n"
         "3. If multiple operations, call compose_costs, then show:\n"
@@ -507,7 +507,7 @@ def build_system_prompt(lang: str = "ru") -> str:
 #  BUILD AGENT
 # ══════════════════════════════════════════════════════════════
 
-_agent_lang: str = "ru"
+_agent_lang: str = "en"
 
 def set_agent_lang(lang: str):
     global _agent_lang

@@ -81,12 +81,12 @@ Task: """
 
 # ══════════════════════════════════════════════════════════════
 #  FORMATTER PROMPT
-#  Goal: produce a clean, plain-text Russian response from computed data.
+#  Goal: produce a clean, plain-text English response from computed data.
 # ══════════════════════════════════════════════════════════════
 
 FORMATTER_SYSTEM = (
     "You are a parallel database systems expert. "
-    "Always respond in Russian. "
+    "Always respond in English. "
     "STRICT FORMAT: plain text only — no LaTeX whatsoever. "
     "Forbidden: \\[, \\], \\(, \\), \\pi, \\sigma, \\bowtie, \\Big, \\frac, \\times, $, $$. "
     "Use * for multiplication, ^ for exponents. "
@@ -111,13 +111,13 @@ Use ONLY Unicode symbols — never LaTeX commands:
 
 2. For EACH step in "steps" array, print a numbered block with ALL of the following:
    ┌─ Step N — <operation type> ─────────────────────────────
-   │  Операция:      <RA expression for this step>
-   │  Алгоритм:      <alg2 / alg3 / LOCAL JOIN / BROADCAST JOIN>
-   │  Причина:       <reason from JSON>
-   │  Блоков/сервер: <blocks_total / num_processors = blocks_per_server>
+   │  Operation:     <RA expression for this step>
+   │  Algorithm:     <alg2 / alg3 / LOCAL JOIN / BROADCAST JOIN>
+   │  Reason:        <reason from JSON>
+   │  Blocks/server: <blocks_total / num_processors = blocks_per_server>
    │  Elapsed:       <elapsed value from JSON — copy EXACTLY>
    │  Total:         <total value from JSON — copy EXACTLY>
-   │  (SELECT only)  После фильтра: <result_blocks> блоков → передаётся в следующий шаг
+   │  (SELECT only)  After filter: <result_blocks> blocks → passed to next step
    └──────────────────────────────────────────────────────────
 
 3. Final summary:
@@ -127,7 +127,7 @@ Use ONLY Unicode symbols — never LaTeX commands:
 Rules:
   - Copy ALL elapsed/total strings EXACTLY from the JSON — do not reformat or simplify.
   - Do NOT merge or skip any step.
-  - Respond in Russian.
+  - Respond in English.
 
 Computed results:
 {results_json}
@@ -156,12 +156,12 @@ class PipelineAgent:
         try:
             plan = self._extract_plan(user_input)
         except Exception as e:
-            return f"Ошибка при разборе задачи: {e}"
+            return f"Error parsing task: {e}"
 
         try:
             steps, combined = self._execute_plan(plan)
         except Exception as e:
-            return f"Ошибка при выполнении плана: {e}"
+            return f"Error executing plan: {e}"
 
         return self._format_result(user_input, plan, steps, combined)
 
