@@ -4,13 +4,10 @@ agents/join_cost_agent.py
 LangGraph agent for parallel Join cost analysis.
 
 ALGORITHM — broadcast Join on p servers:
-  Each server holds a partition of every input table.
-    bs_R = ceil(B_R / p)   blocks of R per server
-    bs_S = ceil(B_S / p)   blocks of S per server
 
-  Step 1 [send]    — every server sends its part to all others:  (bs_R + bs_S)(t_s + t_d)
-  Step 2 [receive] — every server receives from all others:      (bs_R + bs_S)(t_s + t_d)
-  Step 3 [join]    — every server performs a local Join:         (bs_R + bs_S) × 3 × t_d
+  Step 1 [send]    — every server sends the tables to all others:  (B_R + B_S)(t_s + t_d)
+  Step 2 [receive] — every server receives from all others:        (B_R + B_S)(t_s + t_d)
+  Step 3 [join]    — every server performs a local Join:           (B_R + B_S) × 3 × t_d
 
   Elapsed = Step1 + Step2 + Step3
   Total   = p × Elapsed
@@ -119,9 +116,9 @@ def compute_parallel_join(
 
     BROADCAST JOIN (default):
       Used when distributions differ or the partition field is not the join field.
-      Step 1 [send]    -- (bs_a + bs_b) * (t_s + t_d)
-      Step 2 [receive] -- (bs_a + bs_b) * (t_s + t_d)
-      Step 3 [join]    -- (bs_a + bs_b) * 3 * t_d
+      Step 1 [send]    -- (B_a + B_b) * (t_s + t_d)
+      Step 2 [receive] -- (B_a + B_b) * (t_s + t_d)
+      Step 3 [join]    -- (B_a + B_b) * 3 * t_d
       Elapsed = Step1 + Step2 + Step3
       Total   = p * Elapsed
 
@@ -309,12 +306,12 @@ NEVER pass record_count as block count.
 -- BROADCAST JOIN (default, all other cases) --
   Used when distributions differ, or partition field != join field, or round-robin.
 
-  Step 1 [send]    -- each server sends its partition to all others:
-                     (bs_R + bs_S) * (t_s + t_d)
-  Step 2 [receive] -- each server receives partitions from all others:
-                     (bs_R + bs_S) * (t_s + t_d)
-  Step 3 [join]    -- each server performs a local Join over all received data:
-                     (bs_R + bs_S) * 3 * t_d
+  Step 1 [send]    -- every server sends the tables to all others:
+                     (B_R + B_S) * (t_s + t_d)
+  Step 2 [receive] -- every server receives the tables from all others:
+                     (B_R + B_S) * (t_s + t_d)
+  Step 3 [join]    -- every server performs a local Join:
+                     (B_R + B_S) * 3 * t_d
 
   Elapsed = Step 1 + Step 2 + Step 3
   Total   = p * Elapsed

@@ -529,12 +529,12 @@ def join_cost(blocks_s, blocks_t):
 # ── Algorithm 2: BROADCAST JOIN (default) ─────────────────────
 #   Used when distributions differ or partition field != join field.
 #
-#   Step 1 [send]    — every server sends its partition to all others:
-#                      (bs_R + bs_S) * (t_s + t_d)
-#   Step 2 [receive] — every server receives partitions from all others:
-#                      (bs_R + bs_S) * (t_s + t_d)
+#   Step 1 [send]    — every server sends the tables to all others:
+#                      (B_R + B_S) * (t_s + t_d)
+#   Step 2 [receive] — every server receives from all others:
+#                      (B_R + B_S) * (t_s + t_d)
 #   Step 3 [join]    — every server performs a local Join:
-#                      (bs_R + bs_S) * 3 * t_d
+#                      (B_R + B_S) * 3 * t_d
 #
 #   Elapsed = Step1 + Step2 + Step3
 #   Total   = p * Elapsed
@@ -633,9 +633,13 @@ def parallel_join_cost(
 
     else:
         # ── Algorithm 2: BROADCAST JOIN ──────────────────────────
-        step1 = f"({sum_str}) * (t_s + t_d)"
-        step2 = f"({sum_str}) * (t_s + t_d)"
-        step3 = f"({sum_str}) * 3 * t_d"
+        a_s       = _fmt(blocks_a)
+        b_s       = _fmt(blocks_b)
+        sum_total = f"{a_s} + {b_s}"   # full table sizes — NOT per-server
+
+        step1 = f"({sum_total}) * (t_s + t_d)"
+        step2 = f"({sum_total}) * (t_s + t_d)"
+        step3 = f"({sum_total}) * 3 * t_d"
 
         elapsed = f"({step1}) + ({step2}) + ({step3})"
         total   = f"{p_s} * ({elapsed})"
@@ -643,20 +647,20 @@ def parallel_join_cost(
         reason = "distributions differ or partition field != join field" if not colocated else ""
 
         explanation = "\n".join([
-            f"Join: {name_a} * {name_b}  [BROADCAST JOIN -- {reason}]",
-            f"  {name_a}: {_fmt(blocks_a)} blocks -> {bs_a_s} blocks/server  (ceil({_fmt(blocks_a)}/{p_s}))",
-            f"  {name_b}: {_fmt(blocks_b)} blocks -> {bs_b_s} blocks/server  (ceil({_fmt(blocks_b)}/{p_s}))",
+            f"Join: {name_a} ⋈ {name_b}  [BROADCAST JOIN -- {reason}]",
+            f"  {name_a}: {a_s} blocks total",
+            f"  {name_b}: {b_s} blocks total",
             f"  p = {p_s} servers",
             f"",
-            f"  Step 1 [send]    -- each server sends its partition to all others:",
-            f"    {step1}",
-            f"  Step 2 [receive] -- each server receives partitions from all others:",
-            f"    {step2}",
-            f"  Step 3 [join]    -- each server performs local Join:",
-            f"    {step3}",
+            f"  Step 1 [send]    -- every server sends the tables to all others:",
+            f"    ({sum_total}) * (t_s + t_d)  =  {step1}",
+            f"  Step 2 [receive] -- every server receives the tables from all others:",
+            f"    ({sum_total}) * (t_s + t_d)  =  {step2}",
+            f"  Step 3 [join]    -- every server performs a local Join:",
+            f"    ({sum_total}) * 3 * t_d  =  {step3}",
             f"",
             f"  Elapsed = {elapsed}",
-            f"  Total   = {total}",
+            f"  Total   = {p_s} * Elapsed = {total}",
         ])
 
         return {
