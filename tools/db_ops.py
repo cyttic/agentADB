@@ -678,9 +678,11 @@ def parallel_join_cost(
             f"  Step 2 [receive] — each server receives {nm_out}"
             f" from (p-1) = {p - 1} others:",
             f"    {step2}",
-            f"  Step 3 [join]    — each server joins full {nm_out} ({B_out_s})"
-            f" with its {nm_in} partition ({bs_in_s}):",
+            f"  Step 3 [join]    — each server joins full {nm_out} ({B_out_s} blocks,"
+            f" received in full) with its local {nm_in} partition ({bs_in_s} blocks/server):",
             f"    {step3}",
+            f"    NOTE: step3 uses B_out={B_out_s} (full outer) + bs_in={bs_in_s} (inner/p),"
+            f" NOT B_in={B_in_s} (inner total)",
             f"",
             f"  Elapsed = {elapsed}",
             f"  Total   = {p_s} * Elapsed = {total}",

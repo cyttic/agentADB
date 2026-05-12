@@ -321,15 +321,26 @@ NEVER pass record_count as block count.
 -- REGULAR JOIN (default, all other cases) --
   Used when distributions differ, or partition field != join field, or round-robin.
   Broadcast the SMALLER (outer) table to all servers.
-  Each server joins the full outer table with its local inner partition.
+  Each server joins the full outer table with its local partition of the inner table.
 
-  bs_out = ceil(B_out / p),  bs_in = ceil(B_in / p)   [outer = smaller table]
+  outer = smaller table,  inner = larger table
+  bs_out = ceil(B_out / p)   — outer blocks per server
+  bs_in  = ceil(B_in  / p)   — inner blocks per server
+
   Step 1 [send]:    bs_out * t_d + (p-1) * bs_out * t_s
   Step 2 [receive]: (p-1) * bs_out * (t_s + t_d)
   Step 3 [join]:    3 * (B_out + bs_in) * t_d
+    ↑ B_out is the FULL outer table (every server received all of it after steps 1-2)
+    ↑ bs_in = B_in / p  is only the LOCAL partition of the inner table per server
+    !! NEVER write 3 * (B_out + B_in) * t_d — B_in is NOT divided by p here !!
 
   Elapsed = Step 1 + Step 2 + Step 3
   Total   = p * Elapsed
+
+  Example: F=10^4 (outer), S=10^6 (inner), p=10
+    bs_out=10^3, bs_in=10^5
+    Step 3: 3*(10^4 + 10^5)*t_d   ← B_out=10^4 full, bs_in=10^5 per server
+    WRONG:  3*(10^4 + 10^6)*t_d   ← 10^6 is B_in total, not per-server
 
   IMPORTANT: S ⋈ F ≠ F ⋈ S in cost.
   The tool automatically selects the cheaper ordering (outer = smaller table).
