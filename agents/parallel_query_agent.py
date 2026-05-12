@@ -26,13 +26,14 @@ from langgraph.prebuilt import ToolNode
 from typing_extensions import TypedDict
 
 from tools.db_ops import (
-    parse_schema             as _parse_schema,
-    decide_select_algorithm  as _decide_select_algorithm,
-    select_cost              as _select_cost,
-    decide_sort_algorithm    as _decide_sort_algorithm,
-    sort_cost                as _sort_cost,
-    join_cost                as _join_cost,
-    compose_costs            as _compose_costs,
+    parse_schema              as _parse_schema,
+    decide_select_algorithm   as _decide_select_algorithm,
+    select_cost               as _select_cost,
+    decide_sort_algorithm     as _decide_sort_algorithm,
+    sort_cost                 as _sort_cost,
+    join_cost                 as _join_cost,
+    compose_costs             as _compose_costs,
+    compute_table_blocks_info as _compute_table_blocks_info,
 )
 
 
@@ -48,6 +49,45 @@ class QueryAgentState(TypedDict):
 # ══════════════════════════════════════════════════════════════
 #  TOOL WRAPPERS  (LangChain @tool around pure functions in db_ops)
 # ══════════════════════════════════════════════════════════════
+
+@tool
+def compute_table_blocks(
+    record_count:     int,
+    num_attributes:   int,
+    cell_size_bytes:  int,
+    block_size_bytes: int,
+    table_name:       str = "",
+) -> str:
+    """
+    Calculate block count for a table when it is NOT given directly.
+
+    Call this whenever the problem gives: number of records, number of
+    attributes/fields, size of each cell (bytes), and block size (bytes)
+    — instead of a direct block count.
+
+    Formula (shown step by step):
+      row_size_bytes   = num_attributes  × cell_size_bytes
+      table_size_bytes = record_count    × row_size_bytes
+      block_count      = ceil(table_size_bytes / block_size_bytes)
+
+    Args:
+        record_count:     Number of records/tuples in the table.
+        num_attributes:   Number of columns/fields in the table.
+        cell_size_bytes:  Size of one cell value in bytes.
+        block_size_bytes: Size of one disk block in bytes.
+        table_name:       Optional table name for display (e.g. "R").
+
+    Returns JSON with step-by-step calculation and block_count to use next.
+    """
+    try:
+        result = _compute_table_blocks_info(
+            record_count, num_attributes, cell_size_bytes, block_size_bytes, table_name
+        )
+        print(result["explanation"])
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
 
 @tool
 def extract_schema_from_text(task_text: str) -> str:
@@ -114,7 +154,15 @@ def extract_schema_from_text(task_text: str) -> str:
         result["num_processors"] = int(m.group(1))
 
     # ── block_size ───────────────────────────────────────────
-    m = re.search(r'блок[а-я]*\s*[=:]\s*(\d+)|block\s*size\s*[=:]\s*(\d+)|(\d+)\s*байт.*блок|(\d+)\s*bytes.*block', task_text, re.IGNORECASE)
+    m = re.search(
+        r'блок[а-я]*\s*[=:]\s*(\d+)'                       # "блок = 40"
+        r'|block\s*size\s*[=:]\s*(\d+)'                    # "block size = 40"
+        r'|размер\s+(?:\d+\s+)?блок[а-я]*\s+(\d+)'        # "размер 1 блока 40"
+        r'|(\d+)\s*байт[а-я]*\s+(?:в\s+)?блок[а-я]*'      # "40 байт в блоке"
+        r'|(\d+)\s*bytes.*block'                            # "40 bytes per block"
+        r'|(\d+)\s*байт.*блок',                            # "40 байт ... блок"
+        task_text, re.IGNORECASE
+    )
     if m:
         val = next(v for v in m.groups() if v is not None)
         result["block_size"] = int(val)
@@ -160,13 +208,17 @@ def extract_schema_from_text(task_text: str) -> str:
     if bs_extra:
         result["block_size"] = int(bs_extra.group(1))
 
-    # ── field_size_bytes ──────────────────────────────────────
-    # Patterns: "size of every field … is 10 bytes",
-    #           "each field is 10 bytes", "field size = 10 bytes"
+    # ── field_size_bytes / cell_size ──────────────────────────
+    # Handles: "each field is 10 bytes", "field size = 10 bytes",
+    #          "каждая ячейка данных весит 20", "каждая ячейка весит 20",
+    #          "размер ячейки = 20", "вес ячейки 20 байт"
     fs_pat = re.search(
-        r'(?:every|each|каждого|all)\s+field.*?(\d+)\s*bytes?'
-        r'|field\s+size\s*(?:is|=|:)\s*(\d+)\s*bytes?'
-        r'|(\d+)\s*bytes?\s+(?:per\s+)?field',
+        r'(?:every|each|каждого|all)\s+field.*?(\d+)\s*(?:bytes?|байт[а-я]*)?'
+        r'|field\s+size\s*(?:is|=|:)\s*(\d+)\s*(?:bytes?|байт[а-я]*)?'
+        r'|(\d+)\s*(?:bytes?|байт[а-я]*)\s+(?:per\s+)?field'
+        r'|(?:каждая|each)\s+(?:ячейка|cell)(?:\s+данных)?\s+весит\s+(\d+)'
+        r'|(?:размер|вес|size)\s+(?:ячейки|cell)\s*[=:]\s*(\d+)'
+        r'|(\d+)\s*(?:байт[а-я]*|bytes?)\s+(?:на|per)\s+(?:ячейку|cell)',
         task_text, re.IGNORECASE | re.DOTALL
     )
     if fs_pat:
@@ -437,6 +489,7 @@ def compose_costs(steps_json: str) -> str:
 
 
 tools = [
+    compute_table_blocks,
     extract_schema_from_text,
     parse_schema,
     decide_select_algorithm,
@@ -460,8 +513,19 @@ def build_system_prompt(lang: str = "ru") -> str:
 
     return (
         "You are a parallel database systems expert specializing in query cost analysis.\n\n"
-        "1. FIRST call extract_schema_from_text(task_text) passing the FULL raw task text.\n"
+        "0. BLOCK COUNT — check this BEFORE any cost calculation.\n"
+        "   For each table, determine block count by priority:\n"
+        "   a) Block count given directly → use as-is, skip compute_table_blocks.\n"
+        "   b) Block count NOT given, but record_count + cell_size + block_size ARE given\n"
+        "      → call compute_table_blocks FIRST (one call per table).\n"
+        "      Example: R(a,b,c) 100 records, cell = 20 bytes, block = 40 bytes\n"
+        "        compute_table_blocks(record_count=100, num_attributes=3,\n"
+        "                             cell_size_bytes=20, block_size_bytes=40, table_name='R')\n"
+        "        → block_count = 150  (use this in all subsequent calls)\n"
+        "   NEVER compute block counts yourself. NEVER use record_count as block_count.\n\n"
+        "1. THEN call extract_schema_from_text(task_text) passing the FULL raw task text.\n"
         "   Then call parse_schema with the JSON it returns.\n"
+        "   If parse_schema returns block_count = None for a table, call compute_table_blocks.\n"
         "   Never construct the schema JSON yourself — always use extract_schema_from_text.\n"
         "2. Identify which atomic operations the query needs and their order.\n"
         "3. For each Select:\n"
@@ -485,7 +549,12 @@ def build_system_prompt(lang: str = "ru") -> str:
         "  Example: \u03c0(cid)( \u03c3(price > 100)(Products) \u22c8(pid) \u03c3(50 \u2264 qty \u2264 100)(Orders) )\n\n"
         "After computing costs, present the answer in this structure:\n\n"
         "1. Relational Algebra expression (using \u03c3 \u03c0 \u22c8 \u2014 no LaTeX).\n\n"
-        "2. For EACH operation (Select / Sort / Join), a block:\n"
+        "2. For EACH table whose block count was computed (not given directly), show:\n"
+        "   Block count for <TableName>:\n"
+        "     Row size   : <n> attributes \u00d7 <c> bytes = <r> bytes\n"
+        "     Table size : <N> records \u00d7 <r> bytes = <T> bytes\n"
+        "     Block count: ceil(<T> / <b>) = <B> blocks\n\n"
+        "3. For EACH operation (Select / Sort / Join), a block:\n"
         "   Step N \u2014 <operation name>\n"
         "   Operation:     <RA expression for this step>\n"
         "   Algorithm:     <alg2 / alg3 / alg1 / alg2-sort>\n"
@@ -494,7 +563,7 @@ def build_system_prompt(lang: str = "ru") -> str:
         "   Blocks/server: <B/p = bs>\n"
         "   Elapsed:       <value from tool \u2014 copy EXACTLY>\n"
         "   Total:         <value from tool \u2014 copy EXACTLY>\n\n"
-        "3. If multiple operations, call compose_costs, then show:\n"
+        "4. If multiple operations, call compose_costs, then show:\n"
         "   Elapsed = <combined \u2014 copy EXACTLY>\n"
         "   Total   = <combined \u2014 copy EXACTLY>\n\n"
         "NEVER skip per-step Elapsed/Total. NEVER compute numbers yourself \u2014 always call tools.\n"

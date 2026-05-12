@@ -33,11 +33,12 @@ from langgraph.prebuilt import ToolNode
 from typing_extensions import TypedDict
 
 from tools.db_ops import (
-    parallel_join_cost       as _parallel_join_cost,
-    apply_selectivity        as _apply_selectivity,
-    compose_costs            as _compose_costs,
-    decide_select_algorithm  as _decide_select_algorithm,
-    select_cost              as _select_cost,
+    parallel_join_cost        as _parallel_join_cost,
+    apply_selectivity         as _apply_selectivity,
+    compose_costs             as _compose_costs,
+    decide_select_algorithm   as _decide_select_algorithm,
+    select_cost               as _select_cost,
+    compute_table_blocks_info as _compute_table_blocks_info,
     _fmt,
 )
 
@@ -53,6 +54,45 @@ class JoinAgentState(TypedDict):
 # ══════════════════════════════════════════════════════════════
 #  TOOLS
 # ══════════════════════════════════════════════════════════════
+
+@tool
+def compute_table_blocks(
+    record_count:     int,
+    num_attributes:   int,
+    cell_size_bytes:  int,
+    block_size_bytes: int,
+    table_name:       str = "",
+) -> str:
+    """
+    Calculate block count for a table when it is NOT given directly.
+
+    Call this BEFORE compute_parallel_join or compute_select_cost whenever the
+    problem gives: number of records, number of attributes/fields, size of each
+    cell (bytes), and block size (bytes) — instead of a direct block count.
+
+    Formula (shown step by step):
+      row_size_bytes   = num_attributes  × cell_size_bytes
+      table_size_bytes = record_count    × row_size_bytes
+      block_count      = ceil(table_size_bytes / block_size_bytes)
+
+    Args:
+        record_count:     Number of records/tuples in the table.
+        num_attributes:   Number of columns/fields in the table.
+        cell_size_bytes:  Size of one cell value in bytes.
+        block_size_bytes: Size of one disk block in bytes.
+        table_name:       Optional table name for display (e.g. "R").
+
+    Returns JSON with step-by-step calculation and block_count to use next.
+    """
+    try:
+        result = _compute_table_blocks_info(
+            record_count, num_attributes, cell_size_bytes, block_size_bytes, table_name
+        )
+        print(result["explanation"])
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
 
 @tool
 def compute_parallel_join(
@@ -221,6 +261,7 @@ def sum_operation_costs(operations_json: str) -> str:
 
 
 tools = [
+    compute_table_blocks,
     compute_parallel_join,
     compute_select_cost,
     sum_operation_costs,
@@ -233,6 +274,25 @@ tools = [
 
 SYSTEM_PROMPT = """\
 You are an expert in parallel database systems specialising in Join cost analysis.
+
+══ STEP 0 — BLOCK COUNT (do this first, before any cost calculation) ══
+
+For EACH table in the problem, determine its block count using this priority:
+
+  1. Block count given directly (e.g. "table R has 500 blocks")
+     → use that number as-is, do NOT call compute_table_blocks.
+
+  2. Block count NOT given — but record count + cell size + block size ARE given
+     (e.g. "R(a,b,c) has 100 records, each cell is 20 bytes, block size = 40")
+     → call compute_table_blocks FIRST.
+        compute_table_blocks(record_count=100, num_attributes=3,
+                             cell_size_bytes=20, block_size_bytes=40,
+                             table_name="R")
+        result: block_count = 150
+     → use 150 as blocks_a / blocks_b in all subsequent calls.
+
+NEVER compute block counts yourself in text.
+NEVER pass record_count as block count.
 
 ══ TWO JOIN ALGORITHMS ══
 

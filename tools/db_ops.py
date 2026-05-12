@@ -43,6 +43,50 @@ def _fmt(n: int) -> str:
     return str(n)
 
 
+def compute_table_blocks_info(
+    record_count: int,
+    num_attributes: int,
+    cell_size_bytes: int,
+    block_size_bytes: int,
+    table_name: str = "",
+) -> dict:
+    """
+    Calculate block count when it is NOT given directly.
+
+    Formula:
+      row_size_bytes   = num_attributes   × cell_size_bytes
+      table_size_bytes = record_count     × row_size_bytes
+      block_count      = ceil(table_size_bytes / block_size_bytes)
+    """
+    row_size_bytes   = num_attributes * cell_size_bytes
+    table_size_bytes = record_count * row_size_bytes
+    block_count      = math.ceil(table_size_bytes / block_size_bytes)
+
+    name = table_name or "T"
+    explanation = "\n".join([
+        f"Block count calculation for table {name}:",
+        f"  Row size   : {num_attributes} attributes × {cell_size_bytes} bytes/cell"
+        f" = {row_size_bytes} bytes/row",
+        f"  Table size : {record_count} records × {row_size_bytes} bytes/row"
+        f" = {table_size_bytes} bytes",
+        f"  Block count: ceil({table_size_bytes} / {block_size_bytes})"
+        f" = {block_count} blocks",
+        f"  → Use block_count = {block_count} for all subsequent calculations",
+    ])
+
+    return {
+        "table_name":       name,
+        "num_attributes":   num_attributes,
+        "cell_size_bytes":  cell_size_bytes,
+        "row_size_bytes":   row_size_bytes,
+        "record_count":     record_count,
+        "table_size_bytes": table_size_bytes,
+        "block_size_bytes": block_size_bytes,
+        "block_count":      block_count,
+        "explanation":      explanation,
+    }
+
+
 # ══════════════════════════════════════════════════════════════
 #  PARSE SCHEMA
 # ══════════════════════════════════════════════════════════════
