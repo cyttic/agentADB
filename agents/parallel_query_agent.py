@@ -31,7 +31,7 @@ from tools.db_ops import (
     select_cost               as _select_cost,
     decide_sort_algorithm     as _decide_sort_algorithm,
     sort_cost                 as _sort_cost,
-    join_cost                 as _join_cost,
+    parallel_join_cost        as _parallel_join_cost,
     compose_costs             as _compose_costs,
     compute_table_blocks_info as _compute_table_blocks_info,
 )
@@ -451,15 +451,48 @@ def sort_cost(block_count: int, num_processors: int, algorithm: str) -> str:
 
 
 @tool
-def join_cost(blocks_s: int, blocks_t: int) -> str:
+def join_cost(
+    blocks_s:       int,
+    blocks_t:       int,
+    num_processors: int,
+    name_s:         str = "S",
+    name_t:         str = "T",
+    distribution_s: str = "round_robin",
+    distribution_t: str = "round_robin",
+    join_field:     str = "",
+) -> str:
     """
-    Compute Elapsed and Total cost for a Join operation.
-    Placeholder formula: 3 * t_d * (B_s + B_t)   (will be refined later).
+    Compute Elapsed and Total cost for a parallel Join.
 
-    Returns JSON with elapsed, total, explanation.
+    BROADCAST JOIN (default — distributions differ or partition field != join field):
+      Step 1 [send]:    (B_S + B_T) * (t_s + t_d)
+      Step 2 [receive]: (B_S + B_T) * (t_s + t_d)
+      Step 3 [join]:    (B_S + B_T) * 3 * t_d
+      Elapsed = Step1 + Step2 + Step3
+      Total   = p * Elapsed
+
+    LOCAL JOIN (both tables partitioned by the same method on exactly the join field):
+      Elapsed = 3 * (bs_S + bs_T) * t_d
+      Total   = p * Elapsed
+
+    Args:
+        blocks_s:       Total block count of the first (left) table.
+        blocks_t:       Total block count of the second (right) table.
+        num_processors: Number of parallel servers (p).
+        name_s:         Name of the left table (e.g. "Orders").
+        name_t:         Name of the right table (e.g. "Products").
+        distribution_s: Partition scheme of the left table, e.g. "hash(pid)", "round_robin".
+        distribution_t: Partition scheme of the right table.
+        join_field:     The field the Join is performed on (e.g. "pid").
+
+    Returns JSON with step1/step2/step3, elapsed, total, explanation.
     """
     try:
-        result = _join_cost(blocks_s, blocks_t)
+        result = _parallel_join_cost(
+            blocks_s, blocks_t, num_processors,
+            name_s, name_t,
+            distribution_s, distribution_t, join_field,
+        )
         return json.dumps(result, indent=2)
     except Exception as e:
         return json.dumps({"error": str(e)})
@@ -531,9 +564,16 @@ def build_system_prompt(lang: str = "ru") -> str:
         "3. For each Select:\n"
         "   a. Call decide_select_algorithm with question type + distribution.\n"
         "   b. Call select_cost with the chosen algorithm.\n"
-        "4. For each Sort/Join: call sort_cost / join_cost.\n"
-        "5. If multiple operations: call compose_costs to combine.\n"
-        "6. Present the final answer:\n"
+        "4. For each Sort: call decide_sort_algorithm + sort_cost.\n"
+        "5. For each Join: call join_cost with blocks, num_processors, distributions, join_field.\n"
+        "   The tool uses the 3-step broadcast formula:\n"
+        "     Step 1 [send]:    (B_S + B_T) * (t_s + t_d)\n"
+        "     Step 2 [receive]: (B_S + B_T) * (t_s + t_d)\n"
+        "     Step 3 [join]:    (B_S + B_T) * 3 * t_d\n"
+        "     Elapsed = Step1 + Step2 + Step3,  Total = p * Elapsed\n"
+        "   Pass distributions and join_field from the parsed schema.\n"
+        "6. If multiple operations: call compose_costs to combine.\n"
+        "7. Present the final answer:\n"
         "   \u2022 Relational Algebra expression\n"
         "   \u2022 Algorithm choice + reason for each step\n"
         "   \u2022 Elapsed and Total in symbolic form\n\n"
@@ -554,15 +594,27 @@ def build_system_prompt(lang: str = "ru") -> str:
         "     Row size   : <n> attributes \u00d7 <c> bytes = <r> bytes\n"
         "     Table size : <N> records \u00d7 <r> bytes = <T> bytes\n"
         "     Block count: ceil(<T> / <b>) = <B> blocks\n\n"
-        "3. For EACH operation (Select / Sort / Join), a block:\n"
+        "3. For EACH operation, a block \u2014 format depends on type:\n\n"
+        "   Select / Sort:\n"
         "   Step N \u2014 <operation name>\n"
-        "   Operation:     <RA expression for this step>\n"
+        "   Operation:     <RA expression>\n"
         "   Algorithm:     <alg2 / alg3 / alg1 / alg2-sort>\n"
         "   Reason:        <one-line reason from decide_* tool>\n"
         "   Total blocks:  <B>\n"
         "   Blocks/server: <B/p = bs>\n"
-        "   Elapsed:       <value from tool \u2014 copy EXACTLY>\n"
-        "   Total:         <value from tool \u2014 copy EXACTLY>\n\n"
+        "   Elapsed:       <copy from tool EXACTLY>\n"
+        "   Total:         <copy from tool EXACTLY>\n\n"
+        "   Join (ALWAYS show all 3 steps):\n"
+        "   Step N \u2014 Join\n"
+        "   Operation:        <RA expression>\n"
+        "   Algorithm:        broadcast join\n"
+        "   B_S:              <left table blocks>   B_T: <right table blocks>\n"
+        "   p:                <num_processors>\n"
+        "   Step 1 [send]:    <copy step1 from tool EXACTLY>\n"
+        "   Step 2 [receive]: <copy step2 from tool EXACTLY>\n"
+        "   Step 3 [join]:    <copy step3 from tool EXACTLY>\n"
+        "   Elapsed:          <copy elapsed from tool EXACTLY>\n"
+        "   Total:            <copy total from tool EXACTLY>\n\n"
         "4. If multiple operations, call compose_costs, then show:\n"
         "   Elapsed = <combined \u2014 copy EXACTLY>\n"
         "   Total   = <combined \u2014 copy EXACTLY>\n\n"
