@@ -37,6 +37,7 @@ import agents.serializability_agent as _serial_mod
 import agents.parallel_query_agent  as _query_mod
 from version import VERSION
 
+import uvicorn
 
 # ══════════════════════════════════════════════════════════════
 #  APP
@@ -1106,6 +1107,5 @@ checkAgreement();
 #  ENTRY POINT
 # ══════════════════════════════════════════════════════════════
 
-if __name__ == "__main__":
-    import uvicorn
+if __name__ == "__main__":    
     uvicorn.run("api.app:app", host="0.0.0.0", port=8000, reload=True)

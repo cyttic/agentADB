@@ -1,0 +1,10 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*/__pycache__/
+*.pyc           
+# IDE Specific (optional but recommended)
+.vscode/
+.idea/
+*.swp
