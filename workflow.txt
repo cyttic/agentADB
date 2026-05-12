@@ -1,0 +1,105 @@
+DB Assistant Framework — Development & Deployment Workflow
+===========================================================
+
+
+DEVELOPMENT
+-----------
+Code is written with the assistance of Anthropic Claude Sonnet 4.6 — used
+as an AI pair-programmer through the Claude Code CLI. All source files,
+agent prompts, tool logic, and frontend changes are authored and iterated
+in this session-based coding environment.
+
+Once a feature or fix is ready, changes are committed and pushed to the
+project repository on GitHub.
+
+
+CI/CD PIPELINE  (GitHub Actions)
+---------------------------------
+Every push to the main branch triggers an automated workflow defined in
+.github/workflows/. The pipeline runs the following steps in order:
+
+  1. Checkout
+     The runner checks out the latest commit from the repository.
+
+  2. Build Docker image
+     The runner builds a Docker image from the project Dockerfile.
+     The image packages the FastAPI application, all agents, tools, and
+     Python dependencies defined in requirements.txt.
+
+  3. Push to Docker Hub
+     The built image is tagged and pushed to the project's Docker Hub
+     repository. Docker Hub acts as the image registry — a versioned
+     store of every production build.
+
+  4. Deploy to Azure Virtual Machine
+     The runner connects to the Azure VM over SSH and pulls the latest
+     image from Docker Hub. The running container is replaced with the
+     new image, making the updated service available over the internet.
+
+Sensitive credentials used during the pipeline are stored as GitHub Secrets
+and injected into the workflow as environment variables at runtime — they
+are never written into source code or the Docker image.
+
+
+RUNTIME SECRETS
+---------------
+The application's core multi-agent system is powered by the OpenAI API
+(GPT-4o). The API key is stored as a GitHub Secret (OPENAI_API_KEY) and
+passed into the Docker container as an environment variable at deploy time.
+The running application reads it with os.environ.get("OPENAI_API_KEY").
+
+This means:
+  - The key is never committed to the repository.
+  - The key is never baked into the Docker image.
+  - Only the GitHub Actions runner and the Azure VM runtime environment
+    have access to it.
+
+
+FULL FLOW SUMMARY
+-----------------
+
+  Developer  -->  Claude Code (Sonnet 4.6)
+                       |
+                       |  writes / edits code
+                       v
+                  Local repository
+                       |
+                       |  git push
+                       v
+                  GitHub (main branch)
+                       |
+                       |  triggers GitHub Actions workflow
+                       v
+              +--------+--------+
+              |  CI/CD Pipeline |
+              |                 |
+              |  1. Checkout    |
+              |  2. Docker build|
+              |  3. Push to     |
+              |     Docker Hub  |
+              |  4. Deploy to   |
+              |     Azure VM    |
+              +--------+--------+
+                       |
+                       |  container running on Azure VM
+                       v
+                  FastAPI service  <-- OPENAI_API_KEY (from GitHub Secret)
+                       |
+                       |  accessible over the internet
+                       v
+                    End users
+                  (web browser / API)
+
+
+TECHNOLOGY STACK SUMMARY
+-------------------------
+  AI development assistant  :  Anthropic Claude Sonnet 4.6  (Claude Code CLI)
+  Agent runtime             :  OpenAI GPT-4o  (via OPENAI_API_KEY)
+  Agent framework           :  LangGraph + LangChain
+  Web server                :  FastAPI + Uvicorn
+  Containerisation          :  Docker
+  Image registry            :  Docker Hub
+  Source control            :  GitHub
+  CI/CD                     :  GitHub Actions
+  Cloud hosting             :  Azure Virtual Machine
+  Secret management         :  GitHub Secrets

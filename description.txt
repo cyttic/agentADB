@@ -1,0 +1,185 @@
+DB Assistant Framework — Architecture Description
+=================================================
+
+1. USER INPUT
+-------------
+The user submits a natural-language message through one of two interfaces:
+
+- Web UI (api/app.py) — a single-page chat application served by FastAPI.
+  The message is sent via POST /chat as a JSON payload {"message": "..."}.
+- Terminal (main.py) — an interactive input() loop that passes the string
+  directly to the orchestrator.
+
+
+2. INPUT VALIDATION
+-------------------
+At the API layer, before any routing happens, the /chat endpoint performs
+basic sanity checks: it rejects empty or whitespace-only messages with a
+400 error. The message then passes to the orchestrator.
+
+The orchestrator runs a second, semantic validation through its router LLM
+call — a single lightweight LLM call with a structured few-shot prompt that
+classifies the message into one of five labels:
+
+  SERIAL | QUERY | JOIN | MAPREDUCE | UNKNOWN
+
+If the result is UNKNOWN, no agent is invoked and the user receives a message
+listing the supported topics. This acts as a domain-level gate — only messages
+that clearly belong to a supported topic proceed further.
+
+
+3. ORCHESTRATOR — ROUTING AND SCHEDULE
+---------------------------------------
+Orchestrator.handle() is the central coordinator. Based on the router output
+it decides which agent handles the request and maintains separate conversation
+state for each domain so histories never cross-contaminate:
+
+  User message
+      |
+      v
+  Orchestrator._route()  --  1 LLM call  -->  SERIAL | QUERY | JOIN | MAPREDUCE | UNKNOWN
+      |
+      |-- SERIAL     -->  SerializabilityAgent   (LangGraph, persistent history)
+      |-- QUERY      -->  ParallelQueryAgent     (LangGraph, persistent history + db_context)
+      |-- JOIN       -->  PipelineAgent          (3-phase: plan -> execute -> format)
+      |-- MAPREDUCE  -->  MapReduceAgent         (direct LLM, persistent history)
+      `-- UNKNOWN    -->  static fallback message
+
+For JOIN queries the orchestrator also acts as a mini-scheduler: the
+PipelineAgent extracts an ordered operation plan (e.g. [SELECT, JOIN] or
+[JOIN, JOIN]) from the user's message, and Python then executes each step
+sequentially, feeding the output of one step as the input to the next.
+
+
+4. AGENT EXECUTION VIA TOOLS
+-----------------------------
+
+SerializabilityAgent  (LangGraph loop)
+  The agent runs a llm -> tools -> llm -> ... loop until no more tool calls
+  are needed.
+
+  Tools:
+    parse_schedule_from_text      -- parses the raw schedule string, strips
+                                     bidi/RTL characters
+    check_conflict_serializability -- builds a precedence graph, detects cycles,
+                                     returns verdict + cycle path
+    check_view_serializability    -- enumerates serial permutations, checks
+                                     three view conditions (initial reads,
+                                     reads-from, final writes)
+
+  All computation is in Python (tools/confl_ser.py, tools/gemini_view.py).
+  The LLM only decides which tool to call next and formats the final
+  explanation.
+
+- - -
+
+ParallelQueryAgent  (LangGraph loop)
+  Tools:
+    extract_schema_from_text -- regex-based parser: extracts table names,
+                                block counts, field sizes, processor count,
+                                distributions. Handles 10^k notation.
+    parse_schema             -- converts record counts + field sizes to
+                                block counts using block_size
+    decide_select_algorithm  -- picks alg2 or alg3 based on partition scheme
+                                and condition type (point / range / scan)
+    select_cost              -- returns symbolic cost strings (e.g. 10^3 * t_d)
+    sort_cost                -- 4-step sort cost (local sort, send, receive,
+                                merge)
+    join_cost                -- placeholder join cost for simple cases
+    compose_costs            -- sums costs from multiple chained operations
+
+  The LLM never computes numbers. All arithmetic is in tools/db_ops.py.
+
+- - -
+
+PipelineAgent  (deterministic 3-phase, for JOIN queries)
+  This agent intentionally avoids an LLM-controlled tool loop because
+  testing showed the LLM would skip steps in a chain. Execution is split
+  into three hard phases:
+
+  Phase 1 -- PLAN:
+    One LLM call reads the task and returns a structured JSON plan: a list
+    of typed operations (SELECT, JOIN) in execution order, with all
+    parameters (table names, block counts, distributions, join field,
+    selectivity fraction).
+
+  Phase 2 -- EXECUTE:
+    Python iterates the plan deterministically (no LLM involved).
+    - For each SELECT: calls decide_select_algorithm + select_cost, stores
+      result_blocks as a virtual table entry for downstream steps.
+    - For each JOIN: calls parallel_join_cost which automatically chooses:
+        * Local join   -- both tables co-partitioned on the join field
+                          (no communication needed)
+                          Elapsed = 3 * (bs_a + bs_b) * t_d
+        * Broadcast join -- all other cases (3-step algorithm)
+                          Step 1 [send]    (bs_a + bs_b) * (t_s + t_d)
+                          Step 2 [receive] (bs_a + bs_b) * (t_s + t_d)
+                          Step 3 [join]    (bs_a + bs_b) * 3 * t_d
+    The output of each step is chained into the next as input.
+    All cost strings are symbolic and never simplified to a single number.
+
+  Phase 3 -- FORMAT:
+    One LLM call receives all computed data as a JSON object and writes
+    the final human-readable response, copying symbolic cost strings exactly.
+
+- - -
+
+MapReduceAgent  (direct LLM, no tools)
+  Map-Reduce design is pure reasoning -- no arithmetic tools needed.
+  A single LLM call with a structured system prompt produces three sections:
+
+    Section 1: Visualization table (pipe-separated, monospace-rendered)
+      | INPUT    | MAP                       | REDUCE                    |
+      |----------|---------------------------|---------------------------|
+      | d1 -> p1 | [hash(key): (key, val)]   | p1: [k1:[v,v], k2:[v]]   |
+      | ...      |                           |                           |
+
+    Section 2: Chain description
+      Numbered steps: input data -> map phase -> shuffle -> reduce -> output.
+
+    Section 3: Pseudocode
+      map(record) {
+          send(key, value) to P(hash(key))
+      }
+      reduce(key, values[]) {
+          return (key, result)
+      }
+
+  The agent maintains conversation history so follow-up questions work.
+
+
+5. OUTPUT TO USER
+-----------------
+The agent's response string travels back through:
+
+  Agent response (str)
+      |
+      v
+  Orchestrator.handle() returns it to the /chat endpoint
+      |
+      v
+  FastAPI returns { "response": "...", "domain": "QUERY" }
+      |
+      v
+  Browser JS appends a message bubble:
+    - Domain badge  ->  "Agent called [QUERY]"
+    - Content rendered in <pre> with JetBrains Mono font
+      (ensures tables and formulas stay column-aligned in proportional-font
+       browsers)
+
+The domain badge tells the user which agent handled the request. The <pre>
+rendering guarantees that pipe-separated tables, cost formulas, and
+pseudocode blocks are always correctly aligned regardless of browser font.
+
+
+KEY DESIGN PRINCIPLES
+---------------------
+- LLM never computes numbers. All arithmetic is in Python tools (db_ops.py).
+- Symbolic output. Cost results like (10^3 + 10^5) * (t_s + t_d) are never
+  collapsed to a single number.
+- Deterministic JOIN execution. The PipelineAgent separates planning (LLM)
+  from execution (Python) to guarantee every operation in a chain runs.
+- Separate state per domain. Each agent keeps its own conversation history;
+  histories never mix across domains.
+- Monospace rendering. Agent responses are wrapped in <pre> so tables and
+  formulas always align in the browser.

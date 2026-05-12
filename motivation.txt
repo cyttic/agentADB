@@ -1,0 +1,20 @@
+DB Assistant Framework — Motivation
+=====================================
+
+The course "Advanced Themes in Databases" requires solving homework problems
+in a very specific way — following exact algorithms, notations, and step-by-step
+structures defined in the lectures. General AI systems like GPT or Gemini fail
+at these tasks not because they lack knowledge, but because they solve problems
+their own way: they skip required steps, collapse symbolic cost formulas into
+plain numbers, and apply general methods instead of the course-specific rules.
+This framework was built to close that gap. It uses LLM only where language
+understanding is needed — parsing the task, extracting parameters, and formatting
+the final answer — while all decision logic and arithmetic is handled by
+deterministic Python tools written directly from the lecture material. The result
+is a system that always applies the correct algorithm, always produces symbolic
+output in the exact form the course expects, and always executes every step of a
+compound query without skipping — something no general-purpose AI can reliably do.
+
+Web address of the Framework: http://dbsolutionsai.centralindia.cloudapp.azure.com/
+
+Github page : https://github.com/cyttic/agentADB

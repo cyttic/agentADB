@@ -107,6 +107,7 @@ def analyze(schedule):
     edges = set()
     n = len(schedule)
 
+    conflict_pairs = []
     for i in range(n):
         t1, op1, obj1 = schedule[i][1], schedule[i][0], schedule[i][2]
         for j in range(i + 1, n):
@@ -114,6 +115,8 @@ def analyze(schedule):
             if obj1 != obj2 or t1 == t2:
                 continue
             if op1 == 'w' or op2 == 'w':
+                if (t1, t2) not in edges:
+                    conflict_pairs.append((schedule[i], schedule[j], t1, t2))
                 edges.add((t1, t2))
 
     adj = defaultdict(set)
@@ -192,6 +195,7 @@ def analyze(schedule):
         "reads_from": reads_from,
         "serial_order": serial_order,
         "serial_schedule": serial_schedule,
+        "conflict_pairs": conflict_pairs,
     }
 
 
@@ -218,6 +222,19 @@ def print_report(schedule):
         print(f"  {i+1}. {h('T'+str(op[1]), BOLD)}: {h(kind+'('+op[2]+')', color)}")
 
     r = analyze(schedule)
+    print()
+    print(h("CONFLICT ANALYSIS:", BOLD, CYAN))
+    if r['conflict_pairs']:
+        for op1, op2, t1, t2 in r['conflict_pairs']:
+            kind1 = h("read " if op1[0] == 'r' else "write", YELLOW if op1[0] == 'r' else MAGENTA)
+            kind2 = h("read " if op2[0] == 'r' else "write", YELLOW if op2[0] == 'r' else MAGENTA)
+            print(
+                f"  Conflict: {h('T'+str(t1), BOLD)}:{kind1}({op1[2]})  ✕  "
+                f"{h('T'+str(t2), BOLD)}:{kind2}({op2[2]})"
+                f"  →  edge {h('T'+str(t1)+'→T'+str(t2), BOLD, CYAN)}"
+            )
+    else:
+        print(f"  {h('(no conflicts)', DIM)}")
     print()
     print(h("ANALYSIS:", BOLD, CYAN))
     print(f"  Transactions : {['T'+str(t) for t in r['transactions']]}")
