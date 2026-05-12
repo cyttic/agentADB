@@ -63,7 +63,7 @@ _llm_config:   LLMConfig | None    = None
 def _default_config() -> LLMConfig:
     cfg      = load_config()
     provider = cfg.get("default_provider", "openai")
-    model    = cfg.get("default_model",    "gpt-4o")
+    model    = cfg.get("default_model",    "gpt-5.4-mini")
     base_url = None
     n_predict = 2048
 
@@ -882,7 +882,7 @@ HTML_PAGE = """<!DOCTYPE html>
 
 <script>
 const MODELS = {
-  openai:    ['gpt-4o', 'gpt-4o-mini', 'gpt-5.4-mini', 'gpt-5.4-nano'],
+  openai:    ['gpt-5.4-mini', 'gpt-5.4-nano', 'gpt-5.4', 'gpt-5.5'],
   anthropic: ['claude-opus-4-5', 'claude-sonnet-4-5', 'claude-haiku-4-5'],
   ollama:    ['llama3', 'llama3.1', 'mistral', 'phi3', 'qwen2', 'gemma2'],
   local:     ['local'],
