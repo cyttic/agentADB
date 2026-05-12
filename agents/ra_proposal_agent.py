@@ -13,23 +13,31 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 MODELS = ["gpt-4o", "gpt-5.4-nano", "gpt-5.4-mini"]
 
 _RA_PROMPT = """\
-You are a relational algebra expert.
+You are a relational algebra expert specializing in query optimization.
 
-Given the database query description below, write the Relational Algebra expression for it.
+Given the database query description below, write the OPTIMIZED Relational Algebra expression.
 
-STRICT RULES:
+OPTIMIZATION GOAL — minimize the number of Join (⋈) operations:
+1. Apply ALL Select (σ) conditions BEFORE any Join — push selections as far down as possible.
+   This reduces the size of intermediate results entering the join.
+2. Use the MINIMUM number of Joins strictly required to answer the query.
+   Never join tables that are not needed to satisfy the query.
+3. If a condition can be evaluated on a single table without joining, do so with σ alone.
+4. Apply Project (π) as early as possible to drop columns not needed downstream.
+
+NOTATION RULES:
 - Use ONLY these Unicode symbols (no LaTeX, no backslash commands):
     Select:   σ(condition)(Table)
     Project:  π(fields)(Table)
     Join:     Table1 ⋈ Table2   or   Table1 ⋈(condition) Table2
 - Output ONLY the RA expression — no explanation, no extra text, no markdown.
 - If there is no projection needed, omit π.
-- If there is a Select before a Join, write: σ(cond)(Table) ⋈ OtherTable
+- Correct form with Select before Join: σ(cond)(Table) ⋈ OtherTable
 
 Query:
 {query}
 
-RA:"""
+Optimized RA (minimum joins, selections pushed down):"""
 
 
 def _propose_one(query: str, model: str, api_key: str) -> str:
