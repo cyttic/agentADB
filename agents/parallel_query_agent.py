@@ -549,6 +549,13 @@ def build_system_prompt(lang: str = "ru") -> str:
 
     return (
         "You are a parallel database systems expert specializing in query cost analysis.\n\n"
+        "══ PRE-SELECTED RA (human-in-the-loop) ══\n"
+        "If the user message starts with [SELECTED RA]:, that line contains the Relational\n"
+        "Algebra expression chosen by the user from multiple proposals.\n"
+        "In that case:\n"
+        "  - Use that RA expression EXACTLY as written.\n"
+        "  - Do NOT generate, propose, or modify the RA.\n"
+        "  - Proceed directly to schema extraction and cost computation.\n\n"
         "0. BLOCK COUNT — check this BEFORE any cost calculation.\n"
         "   For each table, determine block count by priority:\n"
         "   a) Block count given directly → use as-is, skip compute_table_blocks.\n"

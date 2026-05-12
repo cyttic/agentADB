@@ -12,10 +12,13 @@ The LLM used by all agents is configured once at startup via llm_factory.
 import re
 from langchain_core.messages import HumanMessage, AIMessage
 
+import os
+
 from agents.serializability_agent import build_agent as build_serial_agent
 from agents.parallel_query_agent  import build_agent as build_query_agent
 from agents.pipeline_agent        import PipelineAgent
 from agents.mapreduce_agent       import MapReduceAgent
+from agents.ra_proposal_agent     import generate_ra_proposals
 from llm_factory                  import build_llm, LLMConfig
 
 
@@ -149,6 +152,10 @@ class Orchestrator:
         self.query_history:    list = []
         self.query_db_context: dict = {}
 
+        # Human-in-the-loop RA selection state
+        # Set while waiting for the user to pick one of the 3 RA proposals.
+        self._pending_ra: dict | None = None
+
     def _route(self, user_input: str) -> str:
         """
         Classify input as SERIAL / QUERY / UNKNOWN.
@@ -172,7 +179,85 @@ class Orchestrator:
 
         return domain
 
+    # ── RA selection helpers ──────────────────────────────────────
+
+    def _run_query_agent(self, user_input: str) -> str:
+        """Run the parallel query agent with the given message."""
+        self.query_history.append(HumanMessage(content=user_input))
+        result = self.query_agent.invoke({
+            "messages":   self.query_history,
+            "db_context": self.query_db_context or {},
+        })
+        self.query_history    = result["messages"]
+        self.query_db_context = result.get("db_context") or self.query_db_context or {}
+        last_ai = next(
+            (m for m in reversed(self.query_history) if isinstance(m, AIMessage)),
+            None,
+        )
+        return last_ai.content if last_ai else "(no response)"
+
+    def _propose_ra_and_wait(self, user_input: str) -> str:
+        """
+        Generate 3 RA proposals in parallel, save state, return the selection menu.
+        Falls back to running the query agent directly if OPENAI_API_KEY is missing.
+        """
+        api_key = os.environ.get("OPENAI_API_KEY", "")
+        if not api_key:
+            print(f"{DIM}[RA proposals] OPENAI_API_KEY not set — skipping RA selection{RESET}")
+            return self._run_query_agent(user_input)
+
+        print(f"{DIM}[RA proposals] Calling gpt-4o / gpt-5.4-nano / gpt-5.4-mini in parallel…{RESET}")
+        try:
+            proposals = generate_ra_proposals(user_input, api_key)
+        except Exception as exc:
+            print(f"{RED}[RA proposals] Error: {exc} — falling back to direct agent{RESET}")
+            return self._run_query_agent(user_input)
+
+        self._pending_ra = {"query": user_input, "proposals": proposals}
+
+        lines = ["Three Relational Algebra proposals were generated. Choose one:\n"]
+        for i, (model, ra) in enumerate(proposals, 1):
+            lines.append(f"[{i}] RA from {model}:\n    {ra}\n")
+        lines.append("Enter 1, 2, or 3 to select and proceed with cost calculation.")
+        return "\n".join(lines)
+
+    def _apply_ra_selection(self, choice: str) -> str:
+        """
+        Apply the user's RA choice and run the full query agent with the selected RA
+        injected at the top of the message so the agent skips RA formulation.
+        """
+        state = self._pending_ra
+        self._pending_ra = None
+
+        idx = int(choice) - 1
+        model, ra = state["proposals"][idx]
+        original_query = state["query"]
+
+        print(f"{DIM}[RA selected] {model}: {ra[:80]}{RESET}")
+
+        # Inject the selected RA so the query agent doesn't re-derive it
+        combined = (
+            f"[SELECTED RA]: {ra}\n\n"
+            f"[QUERY]: {original_query}\n\n"
+            "Use the RA above exactly as written. "
+            "Do NOT generate or propose a different RA. "
+            "Proceed directly to schema extraction and cost computation."
+        )
+        return self._run_query_agent(combined)
+
+    # ── Main dispatch ─────────────────────────────────────────────
+
     def handle(self, user_input: str) -> str:
+        # ── Human-in-the-loop: waiting for RA selection ───────────
+        if self._pending_ra is not None:
+            choice = user_input.strip()
+            if choice in ("1", "2", "3"):
+                return self._apply_ra_selection(choice)
+            else:
+                # User sent something other than 1/2/3 — cancel and re-route
+                print(f"{DIM}[RA selection cancelled]{RESET}")
+                self._pending_ra = None
+
         domain = self._route(user_input)
         print(f"{DIM}[router → {domain}]{RESET}")
 
@@ -187,21 +272,9 @@ class Orchestrator:
             return last_ai.content if last_ai else "(no response)"
 
         elif domain == "QUERY":
-            self.query_history.append(HumanMessage(content=user_input))
-            result = self.query_agent.invoke({
-                "messages":   self.query_history,
-                "db_context": self.query_db_context or {},
-            })
-            self.query_history    = result["messages"]
-            self.query_db_context = result.get("db_context") or self.query_db_context or {}
-            last_ai = next(
-                (m for m in reversed(self.query_history) if isinstance(m, AIMessage)),
-                None,
-            )
-            return last_ai.content if last_ai else "(no response)"
+            return self._propose_ra_and_wait(user_input)
 
         elif domain == "JOIN":
-            # Pipeline agent handles planning + execution + formatting deterministically
             return self.pipeline_agent.handle(user_input)
 
         elif domain == "MAPREDUCE":

@@ -149,8 +149,11 @@ async def chat(req: ChatRequest):
     if not req.message.strip():
         raise HTTPException(status_code=400, detail="Empty message")
     try:
-        # Capture the domain from routing
-        domain   = _orchestrator._route(req.message)
+        # Skip routing LLM call when waiting for RA selection (user sends 1/2/3)
+        if _orchestrator._pending_ra is not None:
+            domain = "QUERY"
+        else:
+            domain = _orchestrator._route(req.message)
         response = _orchestrator.handle(req.message)
         return ChatResponse(response=response, domain=domain)
     except Exception as e:
