@@ -215,10 +215,10 @@ class Orchestrator:
 
         self._pending_ra = {"query": user_input, "proposals": proposals}
 
-        lines = ["Three Relational Algebra proposals were generated. Choose one:\n"]
+        lines = ["Two Relational Algebra proposals were generated. Choose one:\n"]
         for i, (model, ra) in enumerate(proposals, 1):
             lines.append(f"[{i}] RA from {model}:\n    {ra}\n")
-        lines.append("Enter 1, 2, or 3 to select and proceed with cost calculation.")
+        lines.append("Enter 1 or 2 to select and proceed with cost calculation.")
         return "\n".join(lines)
 
     def _apply_ra_selection(self, choice: str) -> str:
@@ -251,7 +251,7 @@ class Orchestrator:
         # ── Human-in-the-loop: waiting for RA selection ───────────
         if self._pending_ra is not None:
             choice = user_input.strip()
-            if choice in ("1", "2", "3"):
+            if choice in ("1", "2"):
                 return self._apply_ra_selection(choice)
             else:
                 # User sent something other than 1/2/3 — cancel and re-route

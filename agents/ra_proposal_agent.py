@@ -10,20 +10,32 @@ is a pure reasoning task that benefits from model diversity).
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-MODELS = ["gpt-4o", "gpt-5.4-nano", "gpt-5.4-mini"]
+MODELS = ["gpt-5.4-nano", "gpt-5.4-mini"]
 
 _RA_PROMPT = """\
 You are a relational algebra expert specializing in query optimization.
 
 Given the database query description below, write the OPTIMIZED Relational Algebra expression.
 
-OPTIMIZATION GOAL — minimize the number of Join (⋈) operations:
-1. Apply ALL Select (σ) conditions BEFORE any Join — push selections as far down as possible.
+OPTIMIZATION RULES (apply all of them):
+
+1. USE MINIMUM TABLES — only include tables that are strictly necessary to produce the result.
+   Before adding a table to the expression, ask: "Can I get the required output fields
+   and evaluate all conditions without this table?"
+   If yes — exclude it.
+   Example: query asks for cid of clients who ordered products with cost > 100.
+     Tables: Clients(cid, name), Orders(oid, cid, pid), Products(pid, cost)
+     → cid lives in Orders. cost lives in Products. Clients is NOT needed.
+     → Correct: π(cid)(Orders ⋈ σ(cost > 100)(Products))
+     → Wrong:   Clients ⋈ Orders ⋈ σ(cost > 100)(Products)   ← Clients is redundant
+
+2. PUSH SELECTIONS DOWN — apply ALL σ conditions on a single table BEFORE any Join.
    This reduces the size of intermediate results entering the join.
-2. Use the MINIMUM number of Joins strictly required to answer the query.
-   Never join tables that are not needed to satisfy the query.
-3. If a condition can be evaluated on a single table without joining, do so with σ alone.
-4. Apply Project (π) as early as possible to drop columns not needed downstream.
+
+3. MINIMUM JOINS — use the fewest ⋈ operations strictly required.
+   Never join tables that are not needed to satisfy the query or produce the output.
+
+4. PUSH PROJECTIONS DOWN — apply π as early as possible to drop columns not needed downstream.
 
 NOTATION RULES:
 - Use ONLY these Unicode symbols (no LaTeX, no backslash commands):
@@ -32,12 +44,11 @@ NOTATION RULES:
     Join:     Table1 ⋈ Table2   or   Table1 ⋈(condition) Table2
 - Output ONLY the RA expression — no explanation, no extra text, no markdown.
 - If there is no projection needed, omit π.
-- Correct form with Select before Join: σ(cond)(Table) ⋈ OtherTable
 
 Query:
 {query}
 
-Optimized RA (minimum joins, selections pushed down):"""
+Optimized RA (minimum tables, minimum joins, selections pushed down):"""
 
 
 def _propose_one(query: str, model: str, api_key: str) -> str:
@@ -58,7 +69,7 @@ def generate_ra_proposals(query: str, api_key: str | None = None) -> list[tuple[
     key = api_key or os.environ.get("OPENAI_API_KEY", "")
     results: list[tuple[str, str] | None] = [None] * len(MODELS)
 
-    with ThreadPoolExecutor(max_workers=3) as pool:
+    with ThreadPoolExecutor(max_workers=2) as pool:
         futures = {
             pool.submit(_propose_one, query, model, key): i
             for i, model in enumerate(MODELS)
