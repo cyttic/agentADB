@@ -35,6 +35,7 @@ from llm_factory  import LLMConfig, load_config
 from orchestrator import Orchestrator
 import agents.serializability_agent as _serial_mod
 import agents.parallel_query_agent  as _query_mod
+from version import VERSION
 
 
 # ══════════════════════════════════════════════════════════════
@@ -44,7 +45,7 @@ import agents.parallel_query_agent  as _query_mod
 app = FastAPI(
     title="DB Assistant Framework",
     description="Multi-agent system for parallel DB query cost analysis and schedule serializability",
-    version="1.0.0",
+    version=VERSION,
 )
 
 app.add_middleware(
@@ -194,7 +195,7 @@ async def set_language(req: LangRequest):
 
 @app.get("/", response_class=HTMLResponse)
 async def ui():
-    return HTML_PAGE
+    return HTML_PAGE.replace("__VERSION__", VERSION)
 
 
 HTML_PAGE = """<!DOCTYPE html>
@@ -376,6 +377,14 @@ HTML_PAGE = """<!DOCTYPE html>
     letter-spacing: -0.3px;
   }
   .logo-text span { color: var(--accent); }
+  .logo-version {
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 400;
+    color: var(--muted);
+    letter-spacing: 0.2px;
+    margin-left: 4px;
+  }
 
   .header-right {
     display: flex;
@@ -760,7 +769,7 @@ HTML_PAGE = """<!DOCTYPE html>
 <header>
   <div class="logo">
     <div class="logo-icon">⚙</div>
-    <div class="logo-text">DB <span>Assistant</span> Framework</div>
+    <div class="logo-text">DB <span>Assistant</span> Framework<span class="logo-version">[__VERSION__]</span></div>
   </div>
   <div class="header-right">
 
