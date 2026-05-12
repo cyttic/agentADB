@@ -147,10 +147,15 @@ def analyze(schedule):
 
     topo_order, cycle_found = topo_sort()
 
-    # --- 4. Восстановление эквивалентного серийного расписания ---
-    # Берём операции каждой транзакции в том порядке, как они идут
-    # в исходном расписании, и конкатенируем по topo_order.
+    # --- 4. Enumerate all n! permutations (always, for the report) ---
+    from math import factorial
+    perm_count = factorial(len(transactions))
+    perm_found, perm_serial, perm_order = find_view_equivalent_serial(schedule, transactions)
+
+    # --- 5. Build equivalent serial schedule from topo order (acyclic case) ---
     serial_schedule = None
+    serial_order = topo_order  # may be overridden below
+
     if not cycle_found:
         ops_by_tid = defaultdict(list)
         for op in schedule:
@@ -159,9 +164,7 @@ def analyze(schedule):
         for tid in topo_order:
             serial_schedule.extend(ops_by_tid[tid])
 
-    # --- 5. Применяем правила ---
-    serial_order = topo_order  # may be overridden below
-
+    # --- 6. Verdict ---
     if not cycle_found:
         verdict = "VIEW-SERIALIZABLE"
         reason = "Precedence graph is acyclic → conflict-serial → view-serial"
@@ -172,14 +175,13 @@ def analyze(schedule):
                   "view-serial ⟺ conflict-serial → definitively NOT view-serial")
 
     else:
-        # Cycle + blind writes → enumerate all n! permutations
-        found, serial_schedule, serial_order = find_view_equivalent_serial(
-            schedule, transactions
-        )
-        if found:
+        # Cycle + blind writes → use the permutation result computed above
+        if perm_found:
             verdict = "VIEW-SERIALIZABLE"
             reason = ("Precedence graph has a cycle + blind writes → "
                       "full enumeration found a view-equivalent serial schedule")
+            serial_schedule = perm_serial
+            serial_order = perm_order
         else:
             verdict = "NOT VIEW-SERIALIZABLE"
             reason = ("Precedence graph has a cycle + blind writes → "
@@ -196,6 +198,10 @@ def analyze(schedule):
         "serial_order": serial_order,
         "serial_schedule": serial_schedule,
         "conflict_pairs": conflict_pairs,
+        "perm_count": perm_count,
+        "perm_found": perm_found,
+        "perm_order": perm_order,
+        "perm_serial": perm_serial,
     }
 
 
@@ -252,6 +258,23 @@ def print_report(schedule):
         verdict_str = h(r['verdict'], RED, BOLD)
     print(f"{h('VERDICT', BOLD)} : {verdict_str}")
     print(f"{h('REASON ', BOLD)} : {r['reason']}")
+
+    print()
+    print(h("PERMUTATION CHECK:", BOLD, CYAN))
+    n_tx = len(r['transactions'])
+    print(f"  Enumerated {h(str(n_tx)+'! = '+str(r['perm_count']), BOLD)} serial permutations")
+    if r['perm_found']:
+        perm_order_str = h(' → '.join('T'+str(t) for t in r['perm_order']), GREEN, BOLD)
+        print(f"  Result       : {h('View-equivalent serial schedule FOUND', GREEN, BOLD)}")
+        print(f"  Serial order : {perm_order_str}")
+        print()
+        print(h("  EQUIVALENT SERIAL SCHEDULE:", BOLD, CYAN))
+        for i, op in enumerate(r['perm_serial']):
+            kind = "read " if op[0] == 'r' else "write"
+            color = YELLOW if op[0] == 'r' else MAGENTA
+            print(f"    {i+1}. {h('T'+str(op[1]), BOLD)}: {h(kind+'('+op[2]+')', color)}")
+    else:
+        print(f"  Result       : {h('No view-equivalent serial schedule found', RED, BOLD)}")
 
     if r['serial_schedule'] is not None:
         s = r['serial_schedule']
