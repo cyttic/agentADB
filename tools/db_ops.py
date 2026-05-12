@@ -71,7 +71,8 @@ def compute_table_blocks_info(
         f" = {table_size_bytes} bytes",
         f"  Block count: ceil({table_size_bytes} / {block_size_bytes})"
         f" = {block_count} blocks",
-        f"  → Use block_count = {block_count} for all subsequent calculations",
+        f"  !! USE block_count={block_count} IN ALL SUBSEQUENT TOOL CALLS"
+        f" (select_cost / join_cost / sort_cost). DO NOT use record_count={record_count}.",
     ])
 
     return {
