@@ -40,7 +40,7 @@ docker run -e ANTHROPIC_API_KEY=sk-ant-... -p 8000:8000 agentadb
 docker run \
   -e OPENAI_API_KEY=sk-... \
   -e ANTHROPIC_API_KEY=sk-ant-... \
-  -p 8000:8000 agentadb
+  -p 8000:8000 agentadb  
 ```
 
 For Ollama or a local llama.cpp server, use `--network host` so the container can reach your machine:
