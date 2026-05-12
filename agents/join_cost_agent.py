@@ -3,14 +3,27 @@ agents/join_cost_agent.py
 ==========================
 LangGraph agent for parallel Join cost analysis.
 
-ALGORITHM — broadcast Join on p servers:
+TWO JOIN ALGORITHMS:
 
-  Step 1 [send]    — every server sends the tables to all others:  (B_R + B_S)(t_s + t_d)
-  Step 2 [receive] — every server receives from all others:        (B_R + B_S)(t_s + t_d)
-  Step 3 [join]    — every server performs a local Join:           (B_R + B_S) × 3 × t_d
+1. PARALLEL (HASH) JOIN — only when both tables are partitioned by the SAME
+   method (hash or range) on exactly the join field.
+   Matching tuples are co-located → no communication needed.
+   Elapsed = 3 * (bs_R + bs_S) * t_d,  Total = p * Elapsed
 
-  Elapsed = Step1 + Step2 + Step3
-  Total   = p × Elapsed
+2. REGULAR JOIN — all other cases.
+   Broadcast the SMALLER (outer) table to all servers.
+   bs_out = ceil(B_out / p),  bs_in = ceil(B_in / p)
+
+   Step 1 [send]    — each server sends its outer partition to (p-1) others:
+                      bs_out * t_d + (p-1) * bs_out * t_s
+   Step 2 [receive] — each server receives outer from (p-1) others:
+                      (p-1) * bs_out * (t_s + t_d)
+   Step 3 [join]    — each server joins full outer with its local inner:
+                      3 * (B_out + bs_in) * t_d
+
+   Elapsed = Step1 + Step2 + Step3,  Total = p * Elapsed
+
+   NOTE: S ⋈ F ≠ F ⋈ S in cost. Always choose outer = smaller table.
 
 Compound expressions (Select + Join, Join + Join) are computed operation by operation;
 the final cost is the sum of all individual operation costs.
@@ -114,13 +127,16 @@ def compute_parallel_join(
       Elapsed = 3 * (bs_a + bs_b) * t_d
       Total   = p * Elapsed
 
-    BROADCAST JOIN (default):
+    REGULAR JOIN (default):
       Used when distributions differ or the partition field is not the join field.
-      Step 1 [send]    -- (B_a + B_b) * (t_s + t_d)
-      Step 2 [receive] -- (B_a + B_b) * (t_s + t_d)
-      Step 3 [join]    -- (B_a + B_b) * 3 * t_d
+      The smaller table is broadcast (outer); the larger stays local (inner).
+      bs_out = ceil(B_out / p),  bs_in = ceil(B_in / p)
+      Step 1 [send]:    bs_out * t_d + (p-1) * bs_out * t_s
+      Step 2 [receive]: (p-1) * bs_out * (t_s + t_d)
+      Step 3 [join]:    3 * (B_out + bs_in) * t_d
       Elapsed = Step1 + Step2 + Step3
       Total   = p * Elapsed
+      Tool picks the cheaper ordering automatically (outer = smaller table).
 
     where bs_x = ceil(blocks_x / num_processors)
 
@@ -293,28 +309,30 @@ NEVER pass record_count as block count.
 
 ══ TWO JOIN ALGORITHMS ══
 
--- LOCAL JOIN (no communication) --
+-- PARALLEL (HASH) JOIN — no communication --
   Condition: BOTH tables are partitioned by the SAME method (both hash OR both range)
              on EXACTLY the join field.
-  Matching tuples are guaranteed to be on the same server -- no data transfer needed.
-  Every server joins its local partitions independently.
+  Matching tuples are co-located → no data transfer needed.
 
   bs_R = ceil(B_R / p),  bs_S = ceil(B_S / p)
   Elapsed = 3 * (bs_R + bs_S) * t_d
   Total   = p * Elapsed
 
--- BROADCAST JOIN (default, all other cases) --
+-- REGULAR JOIN (default, all other cases) --
   Used when distributions differ, or partition field != join field, or round-robin.
+  Broadcast the SMALLER (outer) table to all servers.
+  Each server joins the full outer table with its local inner partition.
 
-  Step 1 [send]    -- every server sends the tables to all others:
-                     (B_R + B_S) * (t_s + t_d)
-  Step 2 [receive] -- every server receives the tables from all others:
-                     (B_R + B_S) * (t_s + t_d)
-  Step 3 [join]    -- every server performs a local Join:
-                     (B_R + B_S) * 3 * t_d
+  bs_out = ceil(B_out / p),  bs_in = ceil(B_in / p)   [outer = smaller table]
+  Step 1 [send]:    bs_out * t_d + (p-1) * bs_out * t_s
+  Step 2 [receive]: (p-1) * bs_out * (t_s + t_d)
+  Step 3 [join]:    3 * (B_out + bs_in) * t_d
 
   Elapsed = Step 1 + Step 2 + Step 3
   Total   = p * Elapsed
+
+  IMPORTANT: S ⋈ F ≠ F ⋈ S in cost.
+  The tool automatically selects the cheaper ordering (outer = smaller table).
 
 ══ WORKFLOW ══
 

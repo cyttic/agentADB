@@ -526,18 +526,25 @@ def join_cost(blocks_s, blocks_t):
 #   Elapsed = 3 * (bs_R + bs_S) * t_d
 #   Total   = p * Elapsed
 #
-# ── Algorithm 2: BROADCAST JOIN (default) ─────────────────────
+# ── Algorithm 2: REGULAR JOIN (default) ───────────────────────
 #   Used when distributions differ or partition field != join field.
+#   The SMALLER (outer) table is broadcast to all servers;
+#   each server joins the full outer table with its local inner partition.
 #
-#   Step 1 [send]    — every server sends the tables to all others:
-#                      (B_R + B_S) * (t_s + t_d)
-#   Step 2 [receive] — every server receives from all others:
-#                      (B_R + B_S) * (t_s + t_d)
-#   Step 3 [join]    — every server performs a local Join:
-#                      (B_R + B_S) * 3 * t_d
+#   bs_out = ceil(B_out / p)    (outer = smaller table)
+#   bs_in  = ceil(B_in  / p)
+#
+#   Step 1 [send]    — each server sends its outer partition to (p-1) others:
+#                      bs_out * t_d + (p-1) * bs_out * t_s
+#   Step 2 [receive] — each server receives outer from (p-1) others:
+#                      (p-1) * bs_out * (t_s + t_d)
+#   Step 3 [join]    — each server joins full outer with its local inner:
+#                      3 * (B_out + bs_in) * t_d
 #
 #   Elapsed = Step1 + Step2 + Step3
 #   Total   = p * Elapsed
+#
+#   NOTE: S ⋈ F ≠ F ⋈ S — always pick outer = smaller table (cheaper).
 
 
 def _dist_info(dist: str):
@@ -632,32 +639,47 @@ def parallel_join_cost(
         }
 
     else:
-        # ── Algorithm 2: BROADCAST JOIN ──────────────────────────
-        a_s       = _fmt(blocks_a)
-        b_s       = _fmt(blocks_b)
-        sum_total = f"{a_s} + {b_s}"   # full table sizes — NOT per-server
+        # ── Algorithm 2: REGULAR JOIN ────────────────────────────
+        # Broadcast the smaller (outer) table — always cheaper.
+        if blocks_a <= blocks_b:
+            B_out, bs_out_v = blocks_a, bs_a
+            B_in,  bs_in_v  = blocks_b, bs_b
+            nm_out, nm_in   = name_a, name_b
+        else:
+            B_out, bs_out_v = blocks_b, bs_b
+            B_in,  bs_in_v  = blocks_a, bs_a
+            nm_out, nm_in   = name_b, name_a
 
-        step1 = f"({sum_total}) * (t_s + t_d)"
-        step2 = f"({sum_total}) * (t_s + t_d)"
-        step3 = f"({sum_total}) * 3 * t_d"
+        B_out_s  = _fmt(B_out)
+        B_in_s   = _fmt(B_in)
+        bs_out_s = _fmt(bs_out_v)
+        bs_in_s  = _fmt(bs_in_v)
+
+        step1 = f"{bs_out_s} * t_d + {p - 1} * {bs_out_s} * t_s"
+        step2 = f"{p - 1} * {bs_out_s} * (t_s + t_d)"
+        step3 = f"3 * ({B_out_s} + {bs_in_s}) * t_d"
 
         elapsed = f"({step1}) + ({step2}) + ({step3})"
         total   = f"{p_s} * ({elapsed})"
 
-        reason = "distributions differ or partition field != join field" if not colocated else ""
-
         explanation = "\n".join([
-            f"Join: {name_a} ⋈ {name_b}  [BROADCAST JOIN -- {reason}]",
-            f"  {name_a}: {a_s} blocks total",
-            f"  {name_b}: {b_s} blocks total",
+            f"Join: {name_a} ⋈ {name_b}  [REGULAR JOIN]",
+            f"  Outer (broadcast): {nm_out} — {B_out_s} blocks total,"
+            f" {bs_out_s} blocks/server",
+            f"  Inner (local):     {nm_in} — {B_in_s} blocks total,"
+            f" {bs_in_s} blocks/server",
             f"  p = {p_s} servers",
+            f"  → broadcasting {nm_out} (smaller table) is the cheaper ordering",
             f"",
-            f"  Step 1 [send]    -- every server sends the tables to all others:",
-            f"    ({sum_total}) * (t_s + t_d)  =  {step1}",
-            f"  Step 2 [receive] -- every server receives the tables from all others:",
-            f"    ({sum_total}) * (t_s + t_d)  =  {step2}",
-            f"  Step 3 [join]    -- every server performs a local Join:",
-            f"    ({sum_total}) * 3 * t_d  =  {step3}",
+            f"  Step 1 [send]    — each server sends its {nm_out} partition"
+            f" to (p-1) = {p - 1} others:",
+            f"    {step1}",
+            f"  Step 2 [receive] — each server receives {nm_out}"
+            f" from (p-1) = {p - 1} others:",
+            f"    {step2}",
+            f"  Step 3 [join]    — each server joins full {nm_out} ({B_out_s})"
+            f" with its {nm_in} partition ({bs_in_s}):",
+            f"    {step3}",
             f"",
             f"  Elapsed = {elapsed}",
             f"  Total   = {p_s} * Elapsed = {total}",
@@ -665,9 +687,11 @@ def parallel_join_cost(
 
         return {
             "operation":         "join",
-            "algorithm":         "broadcast",
+            "algorithm":         "regular",
             "table_a":           name_a,
             "table_b":           name_b,
+            "outer_table":       nm_out,
+            "inner_table":       nm_in,
             "blocks_a":          blocks_a,
             "blocks_b":          blocks_b,
             "blocks_per_proc_a": bs_a,

@@ -464,14 +464,17 @@ def join_cost(
     """
     Compute Elapsed and Total cost for a parallel Join.
 
-    BROADCAST JOIN (default — distributions differ or partition field != join field):
-      Step 1 [send]:    (B_S + B_T) * (t_s + t_d)
-      Step 2 [receive]: (B_S + B_T) * (t_s + t_d)
-      Step 3 [join]:    (B_S + B_T) * 3 * t_d
+    REGULAR JOIN (default — distributions differ or partition field != join field):
+      Broadcasts the SMALLER (outer) table to all servers.
+      bs_out = ceil(B_out / p),  bs_in = ceil(B_in / p)
+      Step 1 [send]:    bs_out * t_d + (p-1) * bs_out * t_s
+      Step 2 [receive]: (p-1) * bs_out * (t_s + t_d)
+      Step 3 [join]:    3 * (B_out + bs_in) * t_d
       Elapsed = Step1 + Step2 + Step3
       Total   = p * Elapsed
+      Tool automatically picks outer = smaller table (cheaper ordering).
 
-    LOCAL JOIN (both tables partitioned by the same method on exactly the join field):
+    PARALLEL (HASH) JOIN (both tables partitioned by the same method on the join field):
       Elapsed = 3 * (bs_S + bs_T) * t_d
       Total   = p * Elapsed
 
@@ -566,12 +569,15 @@ def build_system_prompt(lang: str = "ru") -> str:
         "   b. Call select_cost with the chosen algorithm.\n"
         "4. For each Sort: call decide_sort_algorithm + sort_cost.\n"
         "5. For each Join: call join_cost with blocks, num_processors, distributions, join_field.\n"
-        "   The tool uses the 3-step broadcast formula:\n"
-        "     Step 1 [send]:    (B_S + B_T) * (t_s + t_d)\n"
-        "     Step 2 [receive]: (B_S + B_T) * (t_s + t_d)\n"
-        "     Step 3 [join]:    (B_S + B_T) * 3 * t_d\n"
+        "   REGULAR JOIN (default — distributions differ or field != join field):\n"
+        "     Smaller table = outer (broadcast). bs_out = ceil(B_out/p), bs_in = ceil(B_in/p)\n"
+        "     Step 1 [send]:    bs_out * t_d + (p-1) * bs_out * t_s\n"
+        "     Step 2 [receive]: (p-1) * bs_out * (t_s + t_d)\n"
+        "     Step 3 [join]:    3 * (B_out + bs_in) * t_d\n"
         "     Elapsed = Step1 + Step2 + Step3,  Total = p * Elapsed\n"
-        "   Pass distributions and join_field from the parsed schema.\n"
+        "   PARALLEL (HASH) JOIN (same hash/range field on both tables = join field):\n"
+        "     Elapsed = 3 * (bs_R + bs_S) * t_d,  Total = p * Elapsed\n"
+        "   The tool picks the algorithm and the cheaper join ordering automatically.\n"
         "6. If multiple operations: call compose_costs to combine.\n"
         "7. Present the final answer:\n"
         "   \u2022 Relational Algebra expression\n"
