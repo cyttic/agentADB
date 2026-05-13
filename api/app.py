@@ -883,7 +883,7 @@ HTML_PAGE = """<!DOCTYPE html>
 
 <script>
 const MODELS = {
-  openai:    ['gpt-5.4-mini', 'gpt-5.4-nano', 'gpt-5.4', 'gpt-5.5'],
+  openai:    ['gpt-5.4-mini', 'gpt-5.4-nano', 'gpt-5.4'],
   anthropic: ['claude-opus-4-5', 'claude-sonnet-4-5', 'claude-haiku-4-5'],
   ollama:    ['llama3', 'llama3.1', 'mistral', 'phi3', 'qwen2', 'gemma2'],
   local:     ['local'],
