@@ -5,6 +5,7 @@ Routes user input to the correct agent:
   - SerializabilityAgent — schedule conflict/view serializability
   - ParallelQueryAgent   — parallel DB query cost analysis (Select, Sort)
   - JoinCostAgent        — parallel Join cost analysis (broadcast algorithm)
+  - SemiJoinAgent        — Semi-Join cost analysis via Mermaid diagram input
 
 The LLM used by all agents is configured once at startup via llm_factory.
 """
@@ -18,6 +19,7 @@ from agents.serializability_agent import build_agent as build_serial_agent
 from agents.parallel_query_agent  import build_agent as build_query_agent
 from agents.pipeline_agent        import PipelineAgent
 from agents.mapreduce_agent       import MapReduceAgent
+from agents.semijoin_agent        import build_agent as build_semijoin_agent
 from agents.ra_proposal_agent     import generate_ra_proposals
 from llm_factory                  import build_llm, LLMConfig
 
@@ -32,12 +34,13 @@ from llm_factory                  import build_llm, LLMConfig
 
 ROUTER_PROMPT = """Your task: read the user message and output exactly one word.
 
-The word must be one of: SERIAL, QUERY, JOIN, MAPREDUCE, UNKNOWN
+The word must be one of: SERIAL, QUERY, JOIN, SEMIJOIN, MAPREDUCE, UNKNOWN
 
 Rules:
 - Output SERIAL if the message is about transaction schedules, read/write operations, serializability, precedence graphs, or conflict analysis.
 - Output JOIN if the message is about computing the cost of a Join (⋈) operation in a parallel database — possibly combined with Select (σ) before the join, or joining more than two tables.
-- Output QUERY if the message is about parallel databases, processors, block size, query cost, round-robin, hash partitioning, range partitioning, relational algebra, or table scan / sort cost (but NOT primarily Join).
+- Output SEMIJOIN if the message is about a Semi-Join (⋉) operation or contains keywords like "semi-join", "semi join", "semijoin", or asks to draw a diagram for semi-join cost analysis.
+- Output QUERY if the message is about parallel databases, processors, block size, query cost, round-robin, hash partitioning, range partitioning, relational algebra, or table scan / sort cost (but NOT primarily Join or Semi-Join).
 - Output MAPREDUCE if the message is about a Map-Reduce task: word count, distributed aggregation, inverted index, or any task described in terms of map and reduce phases over distributed data.
 - Output UNKNOWN if it is neither.
 
@@ -84,6 +87,15 @@ Answer: MAPREDUCE
 Message: "Use MapReduce to count the number of orders per customer."
 Answer: MAPREDUCE
 
+Message: "Semi-Join issue"
+Answer: SEMIJOIN
+
+Message: "Compute semi-join cost R ⋉ S, 8 processors."
+Answer: SEMIJOIN
+
+Message: "Semi-join R ⋉ S — вычислить стоимость, нарисовать диаграмму."
+Answer: SEMIJOIN
+
 Message: "What is the weather today?"
 Answer: UNKNOWN
 
@@ -114,7 +126,7 @@ RED    = "\033[31m"
 #    instead of doing a strict equality check
 # ══════════════════════════════════════════════════════════════
 
-_VALID = {"SERIAL", "QUERY", "JOIN", "MAPREDUCE", "UNKNOWN"}
+_VALID = {"SERIAL", "QUERY", "JOIN", "SEMIJOIN", "MAPREDUCE", "UNKNOWN"}
 
 def _extract_domain(raw: str) -> str:
     """
@@ -147,6 +159,7 @@ class Orchestrator:
         self.query_agent     = build_query_agent(llm=self.llm)
         self.pipeline_agent  = PipelineAgent(llm=self.llm)
         self.mapreduce_agent = MapReduceAgent(llm=self.llm)
+        self.semijoin_agent  = build_semijoin_agent(llm=self.llm)
 
         self.serial_history:   list = []
         self.query_history:    list = []
@@ -277,15 +290,25 @@ class Orchestrator:
         elif domain == "JOIN":
             return self.pipeline_agent.handle(user_input)
 
+        elif domain == "SEMIJOIN":
+            from langchain_core.messages import AIMessage as _AI
+            result = self.semijoin_agent.invoke({"messages": [HumanMessage(content=user_input)]})
+            last_ai = next(
+                (m for m in reversed(result["messages"]) if isinstance(m, _AI)),
+                None,
+            )
+            return last_ai.content if last_ai else "(no response)"
+
         elif domain == "MAPREDUCE":
             return self.mapreduce_agent.handle(user_input)
 
         else:
             return (
-                "I specialise in four topics:\n"
+                "I specialise in five topics:\n"
                 "  • Transaction schedule serializability\n"
                 "  • Parallel query cost (Select, Sort)\n"
                 "  • Parallel Join cost\n"
+                "  • Parallel Semi-Join cost  (say 'Semi-Join issue' to draw a diagram)\n"
                 "  • Map-Reduce algorithms\n"
                 "Please clarify your question."
             )
