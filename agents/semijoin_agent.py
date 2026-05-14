@@ -25,7 +25,7 @@ from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
 from typing_extensions import TypedDict
 
-from tools.mermaid_editor import launch_diagram_editor
+from tools.mermaid_editor import launch_diagram_editor, extract_schema
 
 
 # ══════════════════════════════════════════════════════════════
@@ -71,10 +71,11 @@ def draw_semijoin_diagram() -> str:
     Do NOT call it a second time unless the user explicitly asks to redraw.
     """
     try:
-        graph = launch_diagram_editor(timeout=600)
-        return json.dumps(graph, indent=2, ensure_ascii=False)
+        graph  = launch_diagram_editor(timeout=600)
+        schema = extract_schema(graph)
+        return json.dumps({'schema': schema, 'graph': graph}, indent=2, ensure_ascii=False)
     except Exception as exc:
-        return json.dumps({"error": str(exc)})
+        return json.dumps({'error': str(exc)})
 
 
 tools = [draw_semijoin_diagram]
@@ -95,10 +96,12 @@ Your ONLY job right now is to help the user capture a Semi-Join diagram.
    The tool opens a browser editor and waits for the user to draw.
    Do not explain, do not ask for parameters first — just call the tool.
 
-2. When the tool returns the graph JSON, present a clean summary:
-   • List each node: name, blocks, distribution, attributes, position
-   • List each edge: source → target, join field, processors, label
-   • Note any overlapping ellipses (same position region → Venn intersection)
+2. When the tool returns, present the schema string on its own line, prominently:
+
+   Schema: Table1(a, b, c); Table2(b, c, d)
+
+   Then briefly list any extra metadata from the ellipses (blocks, distribution)
+   if the user filled them in.
 
 3. Confirm the graph is ready for the computational model.
 

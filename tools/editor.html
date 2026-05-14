@@ -214,7 +214,7 @@ let points   = []; // {id, x, y, name, color}
 let sel      = null;   // null | {kind:'ellipse'|'point', id}
 let tool     = 'select';
 let drag     = null;   // {kind, id, ox, oy}
-let pendingPoint = null; // {x, y} — canvas position awaiting name input
+let pendingShape = null; // {kind:'ellipse'|'point', x, y} — awaiting name input
 
 const ELLIPSE_PALETTE = ['#3b82f6','#f97316','#22c55e','#a855f7','#ec4899','#14b8a6'];
 const POINT_COLOR     = '#fbbf24';
@@ -279,13 +279,13 @@ function pointAt(x, y) {
 //  CRUD
 // ══════════════════════════════════════════════════════════════
 
-function addEllipse(x, y) {
+function addEllipse(x, y, name) {
   const color = ELLIPSE_PALETTE[eColorSeq++ % ELLIPSE_PALETTE.length];
-  const e = { id: uid(), x, y, rx: 90, ry: 60, name: 'Table', blocks: '', dist: '', attrs: '', color };
+  const e = { id: uid(), x, y, rx: 90, ry: 60, name: name || 'Table', blocks: '', dist: '', attrs: '', color };
   ellipses.push(e);
   render();
   setsel('ellipse', e.id);
-  status('Ellipse placed. Edit properties in the panel →');
+  status(`Table "${e.name}" placed. Edit properties in the panel →`);
 }
 
 function addPoint(x, y, name) {
@@ -486,43 +486,39 @@ function renderPoint(p) {
 //  Point name popup
 // ══════════════════════════════════════════════════════════════
 
-function showNamePopup(canvasX, canvasY) {
-  // Position popup near the click in screen coordinates
+function showNamePopup(canvasX, canvasY, label) {
   const rect = canvas.getBoundingClientRect();
-  const sx = rect.left + canvasX + 14;
-  const sy = rect.top  + canvasY - 10;
-
+  namePopup.querySelector('label').textContent = label;
   namePopup.style.display = 'flex';
-  namePopup.style.left    = `${sx}px`;
-  namePopup.style.top     = `${sy}px`;
+  namePopup.style.left    = `${rect.left + canvasX + 14}px`;
+  namePopup.style.top     = `${rect.top  + canvasY - 10}px`;
   nameInput.value         = '';
   nameInput.focus();
 }
 
 function hideNamePopup() {
   namePopup.style.display = 'none';
-  pendingPoint = null;
+  pendingShape = null;
 }
 
 nameInput.addEventListener('keydown', ev => {
   if (ev.key === 'Enter') {
     ev.preventDefault();
     const name = nameInput.value.trim();
-    if (pendingPoint && name) {
-      addPoint(pendingPoint.x, pendingPoint.y, name);
+    if (pendingShape && name) {
+      if (pendingShape.kind === 'ellipse') addEllipse(pendingShape.x, pendingShape.y, name);
+      else                                 addPoint(pendingShape.x, pendingShape.y, name);
     }
     hideNamePopup();
   } else if (ev.key === 'Escape') {
     hideNamePopup();
-    status('Cancelled. Click canvas to place a point.');
+    status('Cancelled.');
   }
 });
 
 // Clicking outside the popup cancels it
 document.addEventListener('mousedown', ev => {
-  if (pendingPoint && !namePopup.contains(ev.target)) {
-    hideNamePopup();
-  }
+  if (pendingShape && !namePopup.contains(ev.target)) hideNamePopup();
 }, true);
 
 // ══════════════════════════════════════════════════════════════
@@ -537,11 +533,11 @@ function onEllipseDown(ev, id) {
     const e = ellipses.find(e => e.id === id);
     drag = { kind: 'ellipse', id, ox: p.x - e.x, oy: p.y - e.y };
   }
-  // In point mode: clicking an existing shape starts a point on top of it
+  // In point mode: clicking an existing shape places a point on top of it
   else if (tool === 'point') {
     const p = svgPt(ev);
-    pendingPoint = p;
-    showNamePopup(p.x, p.y);
+    pendingShape = { kind: 'point', ...p };
+    showNamePopup(p.x, p.y, 'Column name');
   }
 }
 
@@ -556,12 +552,13 @@ function onPointDown(ev, id) {
 // Canvas background click
 canvas.addEventListener('mousedown', ev => {
   if (ev.target !== canvas) return;
+  const p = svgPt(ev);
   if (tool === 'ellipse') {
-    addEllipse(...Object.values(svgPt(ev)));
+    pendingShape = { kind: 'ellipse', ...p };
+    showNamePopup(p.x, p.y, 'Table name');
   } else if (tool === 'point') {
-    const p = svgPt(ev);
-    pendingPoint = p;
-    showNamePopup(p.x, p.y);
+    pendingShape = { kind: 'point', ...p };
+    showNamePopup(p.x, p.y, 'Column name');
   } else {
     setsel(null, null);
   }

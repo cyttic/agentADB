@@ -81,6 +81,28 @@ def _free_port(start: int = 7979) -> int:
     raise RuntimeError('No free port found near 7979')
 
 
+def extract_schema(graph: dict) -> str:
+    """
+    Given the graph dict returned by the editor, produce a schema string of the form:
+        Table1(col1, col2, col3); Table2(col2, col4)
+
+    A point belongs to a table if it lies inside (or on the border of) that table's ellipse.
+    Points in the overlap zone of two ellipses appear in both tables.
+    Ellipses with no points are listed with an empty column list.
+    """
+    result = []
+    for e in graph.get('ellipses', []):
+        cx, cy, rx, ry = e['x'], e['y'], e['rx'], e['ry']
+        cols = [
+            p['name']
+            for p in graph.get('points', [])
+            if (p['x'] - cx) ** 2 / rx ** 2 + (p['y'] - cy) ** 2 / ry ** 2 <= 1.0
+        ]
+        name = e.get('name') or '?'
+        result.append(f"{name}({', '.join(cols)})")
+    return '; '.join(result)
+
+
 def launch_diagram_editor(timeout: int = 600) -> dict:
     """
     Start the local diagram editor server, open the browser, and block
