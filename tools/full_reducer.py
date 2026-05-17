@@ -102,19 +102,37 @@ def gyo_reduction(tables: list[tuple[str, list[str]]]) -> dict:
     changed = True
     while changed and len(edges) > 1:
         changed = False
-        for name in sorted(edges):           # sorted → deterministic output
+
+        # Collect ALL current ears in one pass
+        all_ears: list[tuple[str, str]] = []
+        for name in sorted(edges):
             cover = _find_ear(name, edges)
             if cover is not None:
-                shared = sorted(edges[name] & edges[cover])
-                steps.append(
-                    f"  Remove ear '{name}' "
-                    f"(covered by '{cover}' via {{{', '.join(shared)}}})"
-                )
-                parent_map[name] = cover
-                elimination_order.append(name)
-                del edges[name]
-                changed = True
-                break                        # restart after each removal
+                all_ears.append((name, cover))
+
+        if not all_ears:
+            break   # stuck → cyclic
+
+        # Remove only ears whose covers are NOT also being removed this round.
+        # This ensures stars are fully "peeled" in one round (natural root emerges).
+        covers_this_round = {cover for _, cover in all_ears}
+        to_remove = [(n, c) for n, c in all_ears if n not in covers_this_round]
+
+        # Fallback: if every ear is also someone's cover (e.g. 2-node graph),
+        # remove just the first alphabetically to make progress.
+        if not to_remove:
+            to_remove = [all_ears[0]]
+
+        for name, cover in to_remove:
+            shared = sorted(edges[name] & edges[cover])
+            steps.append(
+                f"  Remove ear '{name}' "
+                f"(covered by '{cover}' via {{{', '.join(shared)}}})"
+            )
+            parent_map[name] = cover
+            elimination_order.append(name)
+            del edges[name]
+            changed = True
 
     is_acyclic = len(edges) <= 1
     root = next(iter(edges)) if edges else None
@@ -174,62 +192,119 @@ def full_reducer_pseudocode(
     intersection: dict[tuple[str, str], list[str]],
 ) -> str:
     """
-    Generate the two-phase Full Reducer pseudocode:
-      Phase 1 (bottom-up): each parent is semi-joined with each child.
-      Phase 2 (top-down):  each child is semi-joined with its parent.
-      Final: natural join across all reduced relations.
+    Generate nested Full Reducer pseudocode using H/G variable convention.
+
+    H = current ear being processed
+    G = the covering relation (H's parent in the join tree)
+
+    Structure per ear:
+      H := <ear>            // ear declaration
+      G := <parent>         // covering relation
+          G := G ⋉ H        // Phase 1 bottom-up: reduce parent by ear
+          [nested: process remaining ears of G]
+          H := H ⋉ G        // Phase 2 top-down:  reduce ear by reduced parent
     """
     am = {n: set(a) for n, a in tables}
 
-    def shared(a: str, b: str) -> list[str]:
+    def sh(a: str, b: str) -> str:
         key = (a, b) if (a, b) in intersection else (b, a)
-        return intersection.get(key, sorted(am[a] & am[b]))
+        s = intersection.get(key, sorted(am.get(a, set()) & am.get(b, set())))
+        return ', '.join(s)
 
+    IND = '    '   # 4-space indent level
     lines: list[str] = []
 
-    # Header
-    lines.append("// Input relations:")
-    for name, attrs in tables:
-        lines.append(f"//   {name}({', '.join(attrs)})")
+    def process(node: str, depth: int) -> None:
+        """Recursively emit pseudocode for all ears of `node`."""
+        ears = sorted(children.get(node, []))
+        if not ears:
+            return
+
+        I  = IND * depth        # indent for H/G declarations
+        I1 = IND * (depth + 1)  # indent for Phase-1/Phase-2 operations
+        I2 = IND * (depth + 2)  # indent for inner (remaining) ears
+
+        first_ear = ears[0]
+        rest_ears  = ears[1:]
+
+        # ── First ear: full H/G header ────────────────────────
+        lines.append(
+            f"{I}H := {first_ear}   "
+            f"// {first_ear} is an ear — its shared attrs [{sh(node, first_ear)}] "
+            f"are all contained within {node}"
+        )
+        lines.append(
+            f"{I}G := {node}   "
+            f"// {node} covers {first_ear}; join condition: [{sh(node, first_ear)}]"
+        )
+
+        # Phase 1 for first ear (parent reduced by ear, bottom-up)
+        lines.append(
+            f"{I1}{node} := {node} ⋉ {first_ear}   "
+            f"// Phase 1 (bottom-up): reduce {node} using ear {first_ear} on [{sh(node, first_ear)}]"
+        )
+
+        # Recurse into first_ear's own sub-ears (deeper level)
+        process(first_ear, depth + 2)
+
+        # ── Remaining ears: compact H/G on one line ───────────
+        for ear in rest_ears:
+            sub_ears = sorted(children.get(ear, []))
+            lines.append(
+                f"{I1}H := {ear},  G = {node}   "
+                f"// next ear: {ear} is also covered by {node} on [{sh(node, ear)}]"
+            )
+            if not sub_ears:
+                # Leaf ear → both phases shown together
+                lines.append(
+                    f"{I2}{node} := {node} ⋉ {ear}   "
+                    f"// Phase 1: reduce {node} using {ear} on [{sh(node, ear)}]"
+                )
+                lines.append(
+                    f"{I2}{ear} := {ear} ⋉ {node}   "
+                    f"// Phase 2: reduce {ear} using reduced {node} on [{sh(node, ear)}]"
+                )
+            else:
+                # Non-leaf ear → full nested block
+                lines.append(
+                    f"{I2}{node} := {node} ⋉ {ear}   "
+                    f"// Phase 1: reduce {node} using {ear} on [{sh(node, ear)}]"
+                )
+                process(ear, depth + 3)
+                lines.append(
+                    f"{I2}{ear} := {ear} ⋉ {node}   "
+                    f"// Phase 2: reduce {ear} using reduced {node} on [{sh(node, ear)}]"
+                )
+
+        # Phase 2 for first ear (ear reduced by fully-reduced parent, top-down)
+        lines.append(
+            f"{I1}{first_ear} := {first_ear} ⋉ {node}   "
+            f"// Phase 2 (top-down): reduce {first_ear} using fully-reduced "
+            f"{node} on [{sh(node, first_ear)}]"
+        )
+
+    # ── File header ───────────────────────────────────────────
+    join_expr = ' ⋈ '.join(n for n, _ in tables)
+    lines.append(f"// Full Reducer — {join_expr}")
     lines.append(f"// Join tree root: {root}")
+    lines.append("//")
+    lines.append("// H = current ear (relation being eliminated)")
+    lines.append("// G = its covering relation (parent in join tree)")
+    lines.append("//")
+    lines.append("// Phase 1 (bottom-up): G := G ⋉ H  — parent absorbs ear's constraint")
+    lines.append("// Phase 2 (top-down) : H := H ⋉ G  — ear is reduced using updated parent")
+    lines.append("//")
+    lines.append(f"// Input: {', '.join(f'{n}({chr(44).join(a)})' for n, a in tables)}")
     lines.append("")
 
-    # ── Phase 1: bottom-up ────────────────────────────────────
-    lines.append("// Phase 1 — Bottom-up  (leaves → root)")
-    lines.append("// Each parent is semi-joined with each of its children.")
-    phase1: list[str] = []
-    for node in _post_order(root, children):
-        for child in sorted(children.get(node, [])):
-            attrs_str = ', '.join(shared(node, child))
-            phase1.append(f"  {node} = {node}  ⋉_[{attrs_str}]  {child}")
-    if phase1:
-        lines.extend(phase1)
-    else:
-        lines.append("  // (only one relation — no bottom-up steps)")
-    lines.append("")
-
-    # ── Phase 2: top-down ─────────────────────────────────────
-    lines.append("// Phase 2 — Top-down  (root → leaves)")
-    lines.append("// Each child is semi-joined with its parent.")
-    phase2: list[str] = []
-    for node in _pre_order(root, children):
-        if node in parent_map:
-            parent = parent_map[node]
-            attrs_str = ', '.join(shared(node, parent))
-            phase2.append(f"  {node} = {node}  ⋉_[{attrs_str}]  {parent}")
-    if phase2:
-        lines.extend(phase2)
-    else:
-        lines.append("  // (only one relation — no top-down steps)")
-    lines.append("")
+    # ── Main recursive body ───────────────────────────────────
+    process(root, 0)
 
     # ── Final join ────────────────────────────────────────────
-    lines.append("// Final natural join")
-    lines.append("// All relations are now free of dangling tuples.")
-    join_order = _pre_order(root, children)
-    lines.append(f"  Result = {' ⋈ '.join(join_order)}")
     lines.append("")
-    lines.append("// (join order can follow any tree-compatible traversal)")
+    lines.append("// ── Result ──────────────────────────────────────────────")
+    lines.append("// After the Full Reducer every relation is dangling-tuple-free.")
+    lines.append(f"Result = {join_expr}")
 
     return '\n'.join(lines)
 
@@ -453,8 +528,8 @@ function layout() {{
   const rect  = svg.getBoundingClientRect();
   const W = rect.width || 700, H = rect.height || 500;
   const n = tables.length;
-  const RX = Math.min(100, Math.max(70, W / (n * 1.4)));
-  const RY = RX * 0.65;
+  const RX = Math.min(150, Math.max(110, W / (n * 1.1)));
+  const RY = RX * 0.68;
 
   const nodes = tables.map((t, i) => ({{
     name: t.name, attrs: t.attrs,
