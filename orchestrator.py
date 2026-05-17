@@ -21,6 +21,7 @@ from agents.pipeline_agent        import PipelineAgent
 from agents.mapreduce_agent       import MapReduceAgent
 from agents.semijoin_agent        import build_agent as build_semijoin_agent
 from agents.datacube_agent        import build_agent as build_datacube_agent
+from agents.full_reducer_agent    import build_agent as build_fullreducer_agent
 from agents.ra_proposal_agent     import generate_ra_proposals
 from llm_factory                  import build_llm, LLMConfig
 
@@ -44,6 +45,7 @@ Rules:
 - Output QUERY if the message is about parallel databases, processors, block size, query cost, round-robin, hash partitioning, range partitioning, relational algebra, or table scan / sort cost (but NOT primarily Join or Semi-Join).
 - Output MAPREDUCE if the message is about a Map-Reduce task: word count, distributed aggregation, inverted index, or any task described in terms of map and reduce phases over distributed data.
 - Output DATACUBE if the message is about data cube materialisation, Hasse diagrams of cubes or subcubes, Ullman's algorithm, selecting N optimal views/cubes, or OLAP lattice optimisation.
+- Output FULLREDUCER if the message mentions "full reducer", "full-reducer", dangling tuples, acyclic join reduction, or asks to apply the semi-join-based Full Reducer algorithm to a schema.
 - Output UNKNOWN if it is neither.
 
 Do NOT explain. Do NOT add punctuation. Output only the single word.
@@ -107,6 +109,15 @@ Answer: DATACUBE
 Message: "Apply Ullman approximation: lattice A->B->C, costs A=1000, B=200, C=50, select N=2."
 Answer: DATACUBE
 
+Message: "Apply Full Reducer to A(a,b,c); B(b,c,d); C(c,d,e)."
+Answer: FULLREDUCER
+
+Message: "Given schema R(a,b), S(b,c), T(a,c) — use the full reducer algorithm."
+Answer: FULLREDUCER
+
+Message: "Check if this join is acyclic and run full-reducer: Emp(id,dept), Dept(dept,mgr), Project(mgr,pid)."
+Answer: FULLREDUCER
+
 Message: "What is the weather today?"
 Answer: UNKNOWN
 
@@ -137,7 +148,7 @@ RED    = "\033[31m"
 #    instead of doing a strict equality check
 # ══════════════════════════════════════════════════════════════
 
-_VALID = {"SERIAL", "QUERY", "JOIN", "SEMIJOIN", "MAPREDUCE", "DATACUBE", "UNKNOWN"}
+_VALID = {"SERIAL", "QUERY", "JOIN", "SEMIJOIN", "MAPREDUCE", "DATACUBE", "FULLREDUCER", "UNKNOWN"}
 
 def _extract_domain(raw: str) -> str:
     """
@@ -171,7 +182,8 @@ class Orchestrator:
         self.pipeline_agent  = PipelineAgent(llm=self.llm)
         self.mapreduce_agent = MapReduceAgent(llm=self.llm)
         self.semijoin_agent  = build_semijoin_agent(llm=self.llm)
-        self.datacube_agent  = build_datacube_agent(llm=self.llm)
+        self.datacube_agent      = build_datacube_agent(llm=self.llm)
+        self.fullreducer_agent   = build_fullreducer_agent(llm=self.llm)
 
         self.serial_history:   list = []
         self.query_history:    list = []
@@ -311,6 +323,15 @@ class Orchestrator:
             )
             return last_ai.content if last_ai else "(no response)"
 
+        elif domain == "FULLREDUCER":
+            from langchain_core.messages import AIMessage as _AI
+            result = self.fullreducer_agent.invoke({"messages": [HumanMessage(content=user_input)]})
+            last_ai = next(
+                (m for m in reversed(result["messages"]) if isinstance(m, _AI)),
+                None,
+            )
+            return last_ai.content if last_ai else "(no response)"
+
         elif domain == "DATACUBE":
             from langchain_core.messages import AIMessage as _AI
             result = self.datacube_agent.invoke({"messages": [HumanMessage(content=user_input)]})
@@ -332,5 +353,6 @@ class Orchestrator:
                 "  • Parallel Semi-Join cost  (say 'Semi-Join issue' to draw a diagram)\n"
                 "  • Map-Reduce algorithms\n"
                 "  • Data-cube materialisation (Ullman's algorithm, Hasse diagrams)\n"
+                "  • Full Reducer algorithm (acyclic join, GYO reduction, semi-join phases)\n"
                 "Please clarify your question."
             )
