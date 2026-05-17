@@ -127,19 +127,19 @@ def run_ullman(costs_json: str, hierarchy_json: str, n: int) -> str:
     rev       = _reverse(hierarchy)
     anc       = {v: _ancestors(v, rev) for v in nodes}
     top       = _find_top(nodes_set, hierarchy)
+    non_top   = [v for v in nodes if v != top]   # fixed columns for benefit matrix
 
     if n > len(nodes):
         n = len(nodes)
 
-    S    = {top}
-    out  = []
-    W    = 56   # column width for separator lines
+    S   = {top}
+    out = []
+    W   = 56
 
     # ── Step 0: initialization ────────────────────────────────
-    qc = _all_qcosts(nodes, S, costs, anc)
     out.append(f"Step 0  Initialise — materialize top cube '{top}'  (n−1 = {n-1} cube(s) to add)")
     out.append(f"  S' = {{{top}}}")
-    out.append(_cost_table(nodes, S, qc, costs, anc, caption="Initial query costs"))
+    out.append(_cost_matrix(non_top, sorted(S), costs, anc, caption="Initial query costs"))
 
     # ── Greedy iterations ─────────────────────────────────────
     iteration = 0
@@ -149,26 +149,22 @@ def run_ullman(costs_json: str, hierarchy_json: str, n: int) -> str:
 
         # Compute benefit for every candidate
         bens: dict[str, int] = {}
-        dets: dict[str, list] = {}
         for v in candidates:
-            b, d = _benefit(v, S, nodes, costs, anc)
+            b, _ = _benefit(v, S, nodes, costs, anc)
             bens[v] = b
-            dets[v] = d
 
-        # Pick max benefit; break ties alphabetically (consistent with sorted())
+        # Pick max benefit; break ties alphabetically (B before D when equal)
         best = max(candidates, key=lambda v: (bens[v], [-ord(c) for c in v]))
-        # Note: second key reverses alphabetical so 'B' beats 'D' when equal
 
         out.append("")
-        out.append(f"Step {iteration}  Compute benefits  (S' has {len(S)} cube(s), need {n - len(S)} more)")
-        out.append(_benefit_table(candidates, bens, dets, costs, best))
-        out.append(f"  → Select '{best}'  (benefit = {bens[best]})")
+        out.append(f"Step {iteration}  Benefit matrix  (S' has {len(S)} cube(s), need {n - len(S)} more)")
+        out.append(_benefit_matrix(candidates, non_top, S, costs, anc, best))
+        out.append(f"  → Select '{best}'  (total benefit = {bens[best]})")
 
         S.add(best)
-        qc = _all_qcosts(nodes, S, costs, anc)
         out.append(f"  S' = {{{', '.join(sorted(S))}}}")
-        out.append(_cost_table(nodes, S, qc, costs, anc,
-                               caption=f"Query costs after adding '{best}'"))
+        out.append(_cost_matrix(non_top, sorted(S), costs, anc,
+                                caption=f"Query costs after adding '{best}'"))
 
     # ── Final summary ─────────────────────────────────────────
     qc_final = _all_qcosts(nodes, S, costs, anc)
@@ -179,8 +175,8 @@ def run_ullman(costs_json: str, hierarchy_json: str, n: int) -> str:
     out.append(f"S' = {{{', '.join(sorted(S))}}}")
     out.append("═" * W)
     out.append("")
-    out.append("Final query cost table:")
-    out.append(_cost_table(nodes, S, qc_final, costs, anc, caption=""))
+    out.append("Final query cost matrix:")
+    out.append(_cost_matrix(non_top, sorted(S), costs, anc, caption=""))
     out.append(f"  Total query cost = {total}")
     out.append("")
     out.append("Summary of greedy choices:")
@@ -195,43 +191,137 @@ def run_ullman(costs_json: str, hierarchy_json: str, n: int) -> str:
 
 # ── formatting helpers ─────────────────────────────────────────
 
-def _source_str(v: str, S: set[str], qc: dict[str, int],
-                costs: dict[str, int], anc: dict[str, set[str]]) -> str:
-    """Which materialised ancestor(s) give the minimum query cost for v."""
-    c = qc[v]
-    srcs = sorted(u for u in (anc[v] & S) if costs[u] == c)
-    return "/".join(srcs)
+def _col_w(labels: list[str], min_w: int = 4) -> int:
+    return max(min_w, max((len(s) for s in labels), default=min_w))
 
 
-def _cost_table(nodes: list[str], S: set[str], qc: dict[str, int],
-                costs: dict[str, int], anc: dict[str, set[str]],
-                caption: str) -> str:
+def _mat_sep(rw: int, col_labels: list[str], cw: int, tw: int) -> str:
+    """Separator row aligned with the matrix header."""
+    mid = '─' * ((cw + 1) * len(col_labels))
+    return f"  {'─'*rw}─+─{mid}+─{'─'*tw}"
+
+
+def _cost_matrix(
+    non_top: list[str],       # row cubes (all except top)
+    S: list[str],             # column cubes (current materialised set, sorted)
+    costs: dict[str, int],
+    anc: dict[str, set[str]],
+    caption: str,
+) -> str:
+    """
+    Query-cost matrix.
+
+    Rows = non-top cubes.
+    Cols = every materialised cube in S.
+    Cell = costs[col] when col is an ancestor of row, else '-'.
+    Last column = effective query cost (minimum reachable source).
+    Materialised cubes on the diagonal or above are shown with *.
+    """
+    rw = _col_w(non_top + ['Cube'], 4)
+    cw = _col_w(S + [str(max(costs.values(), default=0))], 4)
+    tw = _col_w([str(max(costs.values(), default=0)), 'Best'], 4)
+    sep = _mat_sep(rw, S, cw, tw)
+
     lines = []
     if caption:
         lines.append(f"  {caption}:")
-    lines.append(f"  {'Cube':<6} {'Own cost':>9} {'Query cost':>11}  Source")
-    lines.append(f"  {'─'*6} {'─'*9} {'─'*11}  {'─'*12}")
-    for v in nodes:
-        star = " *" if v in S else ""
-        src  = _source_str(v, S, qc, costs, anc)
-        lines.append(f"  {v:<6} {costs.get(v,'?'):>9} {qc[v]:>11}  {src}{star}")
-    lines.append(f"  (* = materialised)")
+
+    # Header
+    hdr = f"  {'Cube':{rw}} |"
+    for c in S:
+        hdr += f" {c:>{cw}}"
+    hdr += f" | {'Best':>{tw}}"
+    lines.append(hdr)
+    lines.append(sep)
+
+    for v in non_top:
+        row = f"  {v:{rw}} |"
+        best_cost = None
+        cells: list[str] = []
+        for c in S:
+            if c in anc[v]:          # c is an ancestor of v → reachable
+                val = costs[c]
+                cells.append(str(val))
+                if best_cost is None or val < best_cost:
+                    best_cost = val
+            else:
+                cells.append('-')
+        for cell in cells:
+            row += f" {cell:>{cw}}"
+        bc_str = str(best_cost) if best_cost is not None else '?'
+        mat_mark = ' *' if v in S else ''   # v itself is materialised
+        row += f" | {bc_str:>{tw}}{mat_mark}"
+        lines.append(row)
+
+    lines.append(sep)
+    lines.append("  (* = cube is itself materialised in S')")
     return "\n".join(lines)
 
 
-def _benefit_table(candidates: list[str], bens: dict[str, int],
-                   dets: dict[str, list], costs: dict[str, int],
-                   best: str) -> str:
+def _benefit_matrix(
+    candidates: list[str],    # row cubes (sorted later by benefit)
+    col_nodes: list[str],     # column cubes (all non-top, fixed across steps)
+    S: set[str],
+    costs: dict[str, int],
+    anc: dict[str, set[str]],
+    best: str,
+) -> str:
+    """
+    Benefit matrix.
+
+    Rows = candidate cubes (not yet in S'), sorted by total benefit descending.
+    Cols = all non-top cubes (consistent across every iteration).
+    Cell = gain that adding this candidate provides to that cube:
+           '-'  when the candidate is not an ancestor of the cube (unreachable),
+           '0'  when ancestor but not cheaper than the current query cost,
+           gain otherwise.
+    Last column = total benefit (sum of gains in row).
+    """
+    # Current query costs for every column cube
+    qc = {v: _qcost(v, S, costs, anc) for v in col_nodes}
+
+    # Build rows
+    row_data: list[tuple[str, list[str], int]] = []
+    for v in candidates:
+        cells: list[str] = []
+        total = 0
+        for c in col_nodes:
+            if v not in anc[c]:                  # v cannot supply c
+                cells.append('-')
+            else:
+                gain = max(0, qc[c] - costs[v])
+                total += gain
+                cells.append('0' if gain == 0 else str(gain))
+        row_data.append((v, cells, total))
+
+    # Sort: highest total benefit first, then alphabetical
+    row_data.sort(key=lambda r: (-r[2], r[0]))
+
+    rw  = _col_w([r[0] for r in row_data] + ['Candidate'], 4)
+    cw  = _col_w(col_nodes + [str(max(costs.values(), default=0))], 4)
+    tw  = _col_w([str(r[2]) for r in row_data] + ['Total'], 5)
+    sep = _mat_sep(rw, col_nodes, cw, tw)
+
     lines = []
-    lines.append(f"  {'Cube':<6} {'Own cost':>9} {'Benefit':>8}  Gain breakdown")
-    lines.append(f"  {'─'*6} {'─'*9} {'─'*8}  {'─'*28}")
-    for v in sorted(candidates, key=lambda x: -bens[x]):
-        breakdown = ",  ".join(
-            f"{w}: {old}→{new} (+{old-new})"
-            for w, old, new in sorted(dets[v])
-        )
-        marker = "  ◄ best" if v == best else ""
-        lines.append(f"  {v:<6} {costs.get(v,'?'):>9} {bens[v]:>8}  {breakdown}{marker}")
+
+    # Header
+    hdr = f"  {'Candidate':{rw}} |"
+    for c in col_nodes:
+        hdr += f" {c:>{cw}}"
+    hdr += f" | {'Total':>{tw}}"
+    lines.append(hdr)
+    lines.append(sep)
+
+    for v, cells, total in row_data:
+        row = f"  {v:{rw}} |"
+        for cell in cells:
+            row += f" {cell:>{cw}}"
+        marker = '  ◄ best' if v == best else ''
+        row += f" | {total:>{tw}}{marker}"
+        lines.append(row)
+
+    lines.append(sep)
+    lines.append("  ('-' = unreachable path,  '0' = reachable but no improvement)")
     return "\n".join(lines)
 
 
