@@ -241,15 +241,45 @@ def _mermaid_node(name: str, attrs: list[str]) -> str:
     return f'    {name}["{label}"]'
 
 
+def find_initial_ears(tables: list[tuple[str, list[str]]]) -> list[str]:
+    """
+    Return all tables that are ears in the INITIAL hypergraph (before any removal).
+
+    A table R is an ear if there exists another table S such that every attribute
+    of R that appears in any other table is entirely contained within S.
+    Multiple tables can be initial ears simultaneously.
+    """
+    edges = {n: set(a) for n, a in tables}
+    return [name for name in sorted(edges) if _find_ear(name, edges) is not None]
+
+
 def render_intersection_mermaid(
     tables: list[tuple[str, list[str]]],
     intersection: dict[tuple[str, str], list[str]],
+    initial_ears: list[str] | None = None,
 ) -> str:
+    """
+    Mermaid intersection graph.
+    Ear nodes get a purple '✦ ear' label and ear classDef.
+    Non-ear nodes get a blue classDef.
+    No root label.
+    """
     lines = ["graph LR"]
+
     for name, attrs in tables:
-        lines.append(_mermaid_node(name, attrs))
+        is_ear   = initial_ears and name in initial_ears
+        ear_mark = '\\n✦ ear' if is_ear else ''
+        cls      = ':::ear' if is_ear else ':::notear'
+        label    = f'{name}\\n({", ".join(attrs)}){ear_mark}'
+        lines.append(f'    {name}["{label}"]{cls}')
+
     for (a, b), shared in intersection.items():
         lines.append(f'    {a} ---|"{", ".join(shared)}"| {b}')
+
+    # Classdefs
+    lines.append('    classDef ear    fill:#1a0a3a,stroke:#a78bfa,color:#c4b5fd,font-weight:bold')
+    lines.append('    classDef notear fill:#0a1020,stroke:#3b82f6,color:#93c5fd')
+
     return '\n'.join(lines)
 
 
@@ -297,13 +327,14 @@ def _schema_viewer_html(result: dict) -> str:
         for a in attrs:
             attr_tables.setdefault(a, []).append(name)
 
+    initial_ears = result.get('initial_ears', [])
+
     js_data = _json.dumps({
-        'tables':           [{'name': n, 'attrs': a} for n, a in tables],
-        'attrTables':       attr_tables,
-        'eliminationOrder': elimination_order,
-        'root':             root,
-        'isAcyclic':        is_acyclic,
-        'gyoSteps':         gyo_steps,
+        'tables':        [{'name': n, 'attrs': a} for n, a in tables],
+        'attrTables':    attr_tables,
+        'initialEars':   initial_ears,
+        'isAcyclic':     is_acyclic,
+        'gyoSteps':      gyo_steps,
     }, ensure_ascii=False)
 
     verdict_cls   = 'acyclic' if is_acyclic else 'cyclic'
@@ -341,8 +372,8 @@ body{{background:#0d1117;color:#e6edf3;font:13px/1.5 'Segoe UI',system-ui,sans-s
 .tbl-label{{font-size:12px}}
 .ear-badge{{display:inline-block;padding:1px 7px;border-radius:99px;
             font-size:10px;font-weight:700;margin-left:4px}}
-.ear-b{{background:#3b0f8a;color:#c4b5fd}}
-.root-b{{background:#0f2a1a;color:#3fb950}}
+.ear-b   {{background:#3b0f8a;color:#c4b5fd;border:1px solid #a78bfa}}
+.notear-b{{background:#0a1020;color:#93c5fd;border:1px solid #3b82f6}}
 #footer{{padding:6px 16px;background:#161b22;border-top:1px solid #30363d;
          font-size:11px;color:#484f58;flex-shrink:0}}
 </style>
@@ -359,7 +390,7 @@ body{{background:#0d1117;color:#e6edf3;font:13px/1.5 'Segoe UI',system-ui,sans-s
     <div id="tbl-list"></div>
     <div class="s-title">GYO Reduction</div>
     <div id="gyo-steps"></div>
-    <div class="s-title">Ear Legend</div>
+    <div class="s-title">Ear Classification</div>
     <div id="ear-legend"></div>
   </div>
 </div>
@@ -369,7 +400,7 @@ body{{background:#0d1117;color:#e6edf3;font:13px/1.5 'Segoe UI',system-ui,sans-s
 <script>
 'use strict';
 const DATA = {js_data};
-const {{ tables, attrTables, eliminationOrder, root, isAcyclic, gyoSteps }} = DATA;
+const {{ tables, attrTables, initialEars, isAcyclic, gyoSteps }} = DATA;
 
 const PALETTE = ['#3b82f6','#f97316','#22c55e','#a855f7','#ec4899','#14b8a6','#f59e0b'];
 const colorMap = {{}};
@@ -381,11 +412,10 @@ const gyoPanel = document.getElementById('gyo-steps');
 const earPanel = document.getElementById('ear-legend');
 
 tables.forEach(t => {{
-  const earIdx = eliminationOrder.indexOf(t.name);
-  const isRoot = t.name === root;
-  let badge = '';
-  if (isRoot)       badge = `<span class="ear-badge root-b">root</span>`;
-  else if (earIdx>=0) badge = `<span class="ear-badge ear-b">ear ${{earIdx+1}}</span>`;
+  const isEar = initialEars.includes(t.name);
+  const badge = isEar
+    ? `<span class="ear-badge ear-b">✦ ear</span>`
+    : `<span class="ear-badge notear-b">not ear</span>`;
   tblList.innerHTML += `<div class="tbl-row">
     <div class="tbl-dot" style="background:${{colorMap[t.name]}}"></div>
     <span class="tbl-label"><b>${{t.name}}</b>(${{t.attrs.join(', ')}})${{badge}}</span>
@@ -396,10 +426,12 @@ gyoSteps.forEach(s => {{
   gyoPanel.innerHTML += `<div class="step">${{s.trim()}}</div>`;
 }});
 
-eliminationOrder.forEach((name,i) => {{
-  earPanel.innerHTML += `<div class="step"><span>Ear ${{i+1}}:</span> ${{name}}</div>`;
-}});
-if (root) earPanel.innerHTML += `<div class="step"><span>Root:</span> ${{root}}</div>`;
+const earTables    = tables.filter(t =>  initialEars.includes(t.name)).map(t=>t.name);
+const notEarTables = tables.filter(t => !initialEars.includes(t.name)).map(t=>t.name);
+if (earTables.length)
+  earPanel.innerHTML += `<div class="step"><span>Ears:</span> ${{earTables.join(', ')}}</div>`;
+if (notEarTables.length)
+  earPanel.innerHTML += `<div class="step"><span>Not ears:</span> ${{notEarTables.join(', ')}}</div>`;
 
 // ── SVG helpers ───────────────────────────────────────────────
 const NS = 'http://www.w3.org/2000/svg';
@@ -554,29 +586,26 @@ function render() {{
       svg.appendChild(t);
     }});
 
-    // Ear badge (top-right of ellipse)
-    const earIdx = eliminationOrder.indexOf(nd.name);
-    const isRoot = nd.name === root;
-    const badgeLabel = isRoot ? 'root' : (earIdx>=0 ? `ear ${{earIdx+1}}` : null);
-    if (badgeLabel) {{
-      const bx = nd.x + nd.rx * 0.62, by = nd.y - nd.ry * 0.78;
-      const bw = badgeLabel.length*6.5+12;
-      svg.appendChild(svgEl('rect', {{
-        x:bx-bw/2, y:by-9, width:bw, height:18, rx:9,
-        fill: isRoot ? '#0f2a1a' : '#3b0f8a',
-        stroke: isRoot ? '#3fb950' : '#a78bfa',
-        'stroke-width':1,
-      }}));
-      const bt = svgEl('text', {{
-        x:bx, y:by+1,
-        'text-anchor':'middle','dominant-baseline':'middle',
-        fill: isRoot ? '#3fb950' : '#c4b5fd',
-        'font-size':10,'font-weight':700,
-        'font-family':'Segoe UI,system-ui,sans-serif','pointer-events':'none',
-      }});
-      bt.textContent = badgeLabel;
-      svg.appendChild(bt);
-    }}
+    // Ear badge (top-right of ellipse): binary ear / not ear, no root label
+    const isEar = initialEars.includes(nd.name);
+    const badgeLabel = isEar ? '✦ ear' : 'not ear';
+    const badgeFill  = isEar ? '#3b0f8a' : '#0a1020';
+    const badgeStroke= isEar ? '#a78bfa' : '#3b82f6';
+    const badgeColor = isEar ? '#c4b5fd' : '#93c5fd';
+    const bx = nd.x + nd.rx * 0.60, by = nd.y - nd.ry * 0.78;
+    const bw = badgeLabel.length * 6.5 + 14;
+    svg.appendChild(svgEl('rect', {{
+      x:bx-bw/2, y:by-9, width:bw, height:18, rx:9,
+      fill:badgeFill, stroke:badgeStroke, 'stroke-width':1,
+    }}));
+    const bt = svgEl('text', {{
+      x:bx, y:by+1,
+      'text-anchor':'middle','dominant-baseline':'middle',
+      fill:badgeColor,'font-size':10,'font-weight':700,
+      'font-family':'Segoe UI,system-ui,sans-serif','pointer-events':'none',
+    }});
+    bt.textContent = badgeLabel;
+    svg.appendChild(bt);
   }});
 }}
 
@@ -650,6 +679,8 @@ def analyze(schema_text: str) -> dict:
     intersection = build_intersection(tables)
     gyo = gyo_reduction(tables)
 
+    initial_ears = find_initial_ears(tables)
+
     result: dict = {
         'tables':             tables,
         'intersection':       {f'{a}∩{b}': v for (a, b), v in intersection.items()},
@@ -658,7 +689,8 @@ def analyze(schema_text: str) -> dict:
         'root':               gyo['root'],
         'parent_map':         gyo['parent_map'],
         'elimination_order':  gyo['elimination_order'],
-        'intersection_mermaid': render_intersection_mermaid(tables, intersection),
+        'initial_ears':       initial_ears,
+        'intersection_mermaid': render_intersection_mermaid(tables, intersection, initial_ears),
     }
 
     if gyo['is_acyclic']:
