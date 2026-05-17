@@ -294,8 +294,8 @@ def _benefit_matrix(
                 cells.append('0' if gain == 0 else str(gain))
         row_data.append((v, cells, total))
 
-    # Sort: highest total benefit first, then alphabetical
-    row_data.sort(key=lambda r: (-r[2], r[0]))
+    # Sort alphabetically so rows are always in a consistent, readable order
+    row_data.sort(key=lambda r: r[0])
 
     rw  = _col_w([r[0] for r in row_data] + ['Candidate'], 4)
     cw  = _col_w(col_nodes + [str(max(costs.values(), default=0))], 4)
