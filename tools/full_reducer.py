@@ -88,13 +88,15 @@ def _find_ear(name: str, edges: dict[str, set[str]]) -> Optional[str]:
 def gyo_reduction(tables: list[tuple[str, list[str]]]) -> dict:
     """
     Run GYO reduction and return:
-      is_acyclic    — bool
-      parent_map    — {removed_table: covering_table}   (join tree edges)
-      root          — last remaining table (root of join tree)
-      steps         — human-readable removal log
+      is_acyclic         — bool
+      parent_map         — {removed_table: covering_table}  (join tree edges)
+      elimination_order  — [table_name, ...] in order of removal
+      root               — last remaining table (root of join tree)
+      steps              — human-readable removal log
     """
     edges = {n: set(a) for n, a in tables}
     parent_map: dict[str, str] = {}
+    elimination_order: list[str] = []
     steps: list[str] = []
 
     changed = True
@@ -109,6 +111,7 @@ def gyo_reduction(tables: list[tuple[str, list[str]]]) -> dict:
                     f"(covered by '{cover}' via {{{', '.join(shared)}}})"
                 )
                 parent_map[name] = cover
+                elimination_order.append(name)
                 del edges[name]
                 changed = True
                 break                        # restart after each removal
@@ -123,10 +126,11 @@ def gyo_reduction(tables: list[tuple[str, list[str]]]) -> dict:
         )
 
     return {
-        'is_acyclic': is_acyclic,
-        'parent_map': parent_map,
-        'root': root,
-        'steps': steps,
+        'is_acyclic':        is_acyclic,
+        'parent_map':        parent_map,
+        'elimination_order': elimination_order,
+        'root':              root,
+        'steps':             steps,
     }
 
 
@@ -270,32 +274,316 @@ def render_join_tree_mermaid(
 
 # ── Read-only HTML viewer ──────────────────────────────────────
 
-def _html_viewer(title: str, mermaid_code: str) -> str:
+def _schema_viewer_html(result: dict) -> str:
+    """
+    Generate a self-contained SVG-based schema viewer:
+    - Ellipses per table, force-directed layout so joined tables overlap
+    - Shared columns shown in gold in the intersection zone
+    - Private columns shown in grey inside each ellipse
+    - Ear badge on every table (ear 1, ear 2, …, root)
+    - Right panel with GYO reduction steps
+    """
+    import json as _json
+
+    tables            = result['tables']          # [(name, [attr, ...])]
+    elimination_order = result.get('elimination_order', [])
+    root              = result.get('root', '')
+    is_acyclic        = result.get('is_acyclic', False)
+    gyo_steps         = result.get('gyo_steps', [])
+
+    # Build attribute → tables map for JavaScript
+    attr_tables: dict[str, list[str]] = {}
+    for name, attrs in tables:
+        for a in attrs:
+            attr_tables.setdefault(a, []).append(name)
+
+    js_data = _json.dumps({
+        'tables':           [{'name': n, 'attrs': a} for n, a in tables],
+        'attrTables':       attr_tables,
+        'eliminationOrder': elimination_order,
+        'root':             root,
+        'isAcyclic':        is_acyclic,
+        'gyoSteps':         gyo_steps,
+    }, ensure_ascii=False)
+
+    verdict_cls   = 'acyclic' if is_acyclic else 'cyclic'
+    verdict_label = '✓ ACYCLIC — Full Reducer applicable' if is_acyclic \
+                    else '✗ CYCLIC — Full Reducer not applicable'
+
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>{title}</title>
-<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<title>Full Reducer — Schema</title>
 <style>
-  body {{ background:#0d1117; color:#e6edf3; font:14px/1.6 'Segoe UI',system-ui,sans-serif;
-         display:flex; flex-direction:column; align-items:center; padding:40px; }}
-  h2   {{ color:#58a6ff; margin-bottom:24px; }}
-  .box {{ background:#161b22; border:1px solid #30363d; border-radius:10px;
-          padding:30px; max-width:900px; width:100%; }}
-  .mermaid {{ display:flex; justify-content:center; }}
-  p    {{ color:#8b949e; font-size:12px; margin-top:16px; text-align:center; }}
+*,*::before,*::after{{box-sizing:border-box;margin:0;padding:0}}
+body{{background:#0d1117;color:#e6edf3;font:13px/1.5 'Segoe UI',system-ui,sans-serif;
+     height:100vh;display:flex;flex-direction:column;overflow:hidden}}
+#header{{display:flex;align-items:center;gap:16px;padding:8px 16px;
+         background:#161b22;border-bottom:1px solid #30363d;flex-shrink:0}}
+#header h1{{font-size:13px;font-weight:600;color:#58a6ff}}
+.verdict{{padding:3px 12px;border-radius:99px;font-size:11px;font-weight:700}}
+.acyclic{{background:#0f2a1a;color:#3fb950;border:1px solid #3fb950}}
+.cyclic {{background:#2a0f0f;color:#f85149;border:1px solid #f85149}}
+#workspace{{flex:1;display:flex;overflow:hidden}}
+#diagram{{flex:1;display:block;background:#161b22;
+          background-image:radial-gradient(circle,#2a2f3a 1px,transparent 1px);
+          background-size:24px 24px}}
+#sidebar{{width:230px;flex-shrink:0;background:#0d1117;border-left:1px solid #30363d;
+          overflow-y:auto;padding:12px}}
+.s-title{{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;
+          color:#8b949e;margin:12px 0 6px}}
+.s-title:first-child{{margin-top:0}}
+.step{{font-size:11px;color:#94a3b8;line-height:1.7;padding:2px 0}}
+.step span{{color:#e6edf3}}
+.tbl-row{{display:flex;align-items:center;gap:6px;margin-bottom:4px}}
+.tbl-dot{{width:10px;height:10px;border-radius:50%;flex-shrink:0}}
+.tbl-label{{font-size:12px}}
+.ear-badge{{display:inline-block;padding:1px 7px;border-radius:99px;
+            font-size:10px;font-weight:700;margin-left:4px}}
+.ear-b{{background:#3b0f8a;color:#c4b5fd}}
+.root-b{{background:#0f2a1a;color:#3fb950}}
+#footer{{padding:6px 16px;background:#161b22;border-top:1px solid #30363d;
+         font-size:11px;color:#484f58;flex-shrink:0}}
 </style>
 </head>
 <body>
-<h2>{title}</h2>
-<div class="box">
-  <div class="mermaid">
-{mermaid_code}
+<div id="header">
+  <h1>Full Reducer — Schema Graph</h1>
+  <span class="verdict {verdict_cls}">{verdict_label}</span>
+</div>
+<div id="workspace">
+  <svg id="diagram" xmlns="http://www.w3.org/2000/svg"></svg>
+  <div id="sidebar">
+    <div class="s-title">Tables</div>
+    <div id="tbl-list"></div>
+    <div class="s-title">GYO Reduction</div>
+    <div id="gyo-steps"></div>
+    <div class="s-title">Ear Legend</div>
+    <div id="ear-legend"></div>
   </div>
 </div>
-<p>Read-only view — generated by agentADB Full Reducer agent</p>
-<script>mermaid.initialize({{startOnLoad:true, theme:'dark'}});</script>
+<div id="footer">
+  Overlapping ellipses share columns (shown in gold) · Private columns shown in grey inside each ellipse
+</div>
+<script>
+'use strict';
+const DATA = {js_data};
+const {{ tables, attrTables, eliminationOrder, root, isAcyclic, gyoSteps }} = DATA;
+
+const PALETTE = ['#3b82f6','#f97316','#22c55e','#a855f7','#ec4899','#14b8a6','#f59e0b'];
+const colorMap = {{}};
+tables.forEach((t,i) => colorMap[t.name] = PALETTE[i % PALETTE.length]);
+
+// ── Sidebar ──────────────────────────────────────────────────
+const tblList  = document.getElementById('tbl-list');
+const gyoPanel = document.getElementById('gyo-steps');
+const earPanel = document.getElementById('ear-legend');
+
+tables.forEach(t => {{
+  const earIdx = eliminationOrder.indexOf(t.name);
+  const isRoot = t.name === root;
+  let badge = '';
+  if (isRoot)       badge = `<span class="ear-badge root-b">root</span>`;
+  else if (earIdx>=0) badge = `<span class="ear-badge ear-b">ear ${{earIdx+1}}</span>`;
+  tblList.innerHTML += `<div class="tbl-row">
+    <div class="tbl-dot" style="background:${{colorMap[t.name]}}"></div>
+    <span class="tbl-label"><b>${{t.name}}</b>(${{t.attrs.join(', ')}})${{badge}}</span>
+  </div>`;
+}});
+
+gyoSteps.forEach(s => {{
+  gyoPanel.innerHTML += `<div class="step">${{s.trim()}}</div>`;
+}});
+
+eliminationOrder.forEach((name,i) => {{
+  earPanel.innerHTML += `<div class="step"><span>Ear ${{i+1}}:</span> ${{name}}</div>`;
+}});
+if (root) earPanel.innerHTML += `<div class="step"><span>Root:</span> ${{root}}</div>`;
+
+// ── SVG helpers ───────────────────────────────────────────────
+const NS = 'http://www.w3.org/2000/svg';
+const svg = document.getElementById('diagram');
+
+function svgEl(tag, attrs={{}}) {{
+  const e = document.createElementNS(NS, tag);
+  for (const [k,v] of Object.entries(attrs)) e.setAttribute(k, String(v));
+  return e;
+}}
+
+function hex2rgba(hex, a) {{
+  const r=parseInt(hex.slice(1,3),16),g=parseInt(hex.slice(3,5),16),b=parseInt(hex.slice(5,7),16);
+  return `rgba(${{r}},${{g}},${{b}},${{a}})`;
+}}
+
+// ── Layout ────────────────────────────────────────────────────
+function layout() {{
+  const rect  = svg.getBoundingClientRect();
+  const W = rect.width || 700, H = rect.height || 500;
+  const n = tables.length;
+  const RX = Math.min(100, Math.max(70, W / (n * 1.4)));
+  const RY = RX * 0.65;
+
+  const nodes = tables.map((t, i) => ({{
+    name: t.name, attrs: t.attrs,
+    x: W/2 + (W*0.32) * Math.cos(2*Math.PI*i/n - Math.PI/2),
+    y: H/2 + (H*0.32) * Math.sin(2*Math.PI*i/n - Math.PI/2),
+    rx: RX, ry: RY, vx: 0, vy: 0,
+  }}));
+  const nodeMap = {{}};
+  nodes.forEach(nd => nodeMap[nd.name] = nd);
+
+  // Pairs that share attrs → should overlap
+  const sharedPairs = [];
+  const names = tables.map(t=>t.name);
+  for (let i=0;i<names.length;i++) for (let j=i+1;j<names.length;j++) {{
+    const a=names[i],b=names[j];
+    const s=tables[i].attrs.filter(x=>tables[j].attrs.includes(x));
+    if (s.length) sharedPairs.push([a,b,s]);
+  }}
+
+  // Spring simulation
+  for (let iter=0;iter<350;iter++) {{
+    const cool=Math.max(0.02, 1-iter/220);
+    // Repulsion
+    for (let i=0;i<nodes.length;i++) for (let j=i+1;j<nodes.length;j++) {{
+      const a=nodes[i],b=nodes[j];
+      const dx=b.x-a.x, dy=b.y-a.y, dist=Math.sqrt(dx*dx+dy*dy)||0.1;
+      const f=14000/(dist*dist);
+      a.vx-=f*dx/dist; a.vy-=f*dy/dist;
+      b.vx+=f*dx/dist; b.vy+=f*dy/dist;
+    }}
+    // Attraction for shared pairs
+    sharedPairs.forEach(([na,nb]) => {{
+      const a=nodeMap[na],b=nodeMap[nb];
+      const dx=b.x-a.x, dy=b.y-a.y, dist=Math.sqrt(dx*dx+dy*dy)||0.1;
+      const target=(a.rx+b.rx)*0.45;
+      const f=(dist-target)*0.07;
+      a.vx+=f*dx/dist; a.vy+=f*dy/dist;
+      b.vx-=f*dx/dist; b.vy-=f*dy/dist;
+    }});
+    nodes.forEach(nd=>{{
+      nd.x=Math.max(nd.rx+16,Math.min(W-nd.rx-16, nd.x+nd.vx*cool));
+      nd.y=Math.max(nd.ry+24,Math.min(H-nd.ry-24, nd.y+nd.vy*cool));
+      nd.vx*=0.78; nd.vy*=0.78;
+    }});
+  }}
+  return {{nodes, nodeMap, sharedPairs, W, H}};
+}}
+
+// ── Render ────────────────────────────────────────────────────
+function render() {{
+  svg.innerHTML = '';
+  const {{nodes, nodeMap, sharedPairs, W, H}} = layout();
+
+  // Private attrs per table
+  const privateAttrs = {{}};
+  tables.forEach(t => {{
+    privateAttrs[t.name] = t.attrs.filter(a => (attrTables[a]||[]).length === 1);
+  }});
+
+  // ── Ellipses (draw first so text is on top) ───────────────
+  nodes.forEach(nd => {{
+    const color = colorMap[nd.name];
+    svg.appendChild(svgEl('ellipse', {{
+      cx:nd.x, cy:nd.y, rx:nd.rx, ry:nd.ry,
+      fill: hex2rgba(color, 0.28),
+      stroke: color, 'stroke-width': 2.5,
+    }}));
+  }});
+
+  // ── Shared attribute labels (gold, in intersection zones) ─
+  // Group attrs by the sorted list of tables that share them
+  const pairGroups = {{}};  // "A-B" → {{x,y,attrs:[]}}
+  for (const [attr, tNames] of Object.entries(attrTables)) {{
+    if (tNames.length < 2) continue;
+    const key = [...tNames].sort().join('\x00');
+    if (!pairGroups[key]) {{
+      const cx = tNames.reduce((s,n)=>s+nodeMap[n].x,0)/tNames.length;
+      const cy = tNames.reduce((s,n)=>s+nodeMap[n].y,0)/tNames.length;
+      pairGroups[key] = {{x:cx, y:cy, attrs:[]}};
+    }}
+    pairGroups[key].attrs.push(attr);
+  }}
+
+  for (const {{x,y,attrs}} of Object.values(pairGroups)) {{
+    const totalH = attrs.length * 17;
+    const startY = y - totalH/2 + 9;
+    attrs.forEach((attr,i) => {{
+      // Background pill
+      svg.appendChild(svgEl('rect', {{
+        x:x-22, y:startY+i*17-9, width:44, height:17, rx:5,
+        fill:'#1e293b', opacity:0.88,
+      }}));
+      const t = svgEl('text', {{
+        x, y:startY+i*17,
+        'text-anchor':'middle','dominant-baseline':'middle',
+        fill:'#fbbf24','font-size':12,'font-weight':700,
+        'font-family':'monospace','pointer-events':'none',
+      }});
+      t.textContent = attr;
+      svg.appendChild(t);
+    }});
+  }}
+
+  // ── Table labels + private attrs + ear badges ─────────────
+  nodes.forEach(nd => {{
+    const color = colorMap[nd.name];
+    const priv  = privateAttrs[nd.name];
+
+    // Table name
+    const nameY = nd.y - (priv.length > 0 ? priv.length*7 : 0) - 4;
+    const nameT = svgEl('text', {{
+      x:nd.x, y:nameY,
+      'text-anchor':'middle','dominant-baseline':'middle',
+      fill:'#f0f6fc','font-size':15,'font-weight':700,
+      'font-family':'Segoe UI,system-ui,sans-serif','pointer-events':'none',
+    }});
+    nameT.textContent = nd.name;
+    svg.appendChild(nameT);
+
+    // Private attribute list
+    priv.forEach((attr,i) => {{
+      const t = svgEl('text', {{
+        x:nd.x, y:nameY+16+i*14,
+        'text-anchor':'middle','dominant-baseline':'middle',
+        fill:'#94a3b8','font-size':11,
+        'font-family':'Segoe UI,system-ui,sans-serif','pointer-events':'none',
+      }});
+      t.textContent = attr;
+      svg.appendChild(t);
+    }});
+
+    // Ear badge (top-right of ellipse)
+    const earIdx = eliminationOrder.indexOf(nd.name);
+    const isRoot = nd.name === root;
+    const badgeLabel = isRoot ? 'root' : (earIdx>=0 ? `ear ${{earIdx+1}}` : null);
+    if (badgeLabel) {{
+      const bx = nd.x + nd.rx * 0.62, by = nd.y - nd.ry * 0.78;
+      const bw = badgeLabel.length*6.5+12;
+      svg.appendChild(svgEl('rect', {{
+        x:bx-bw/2, y:by-9, width:bw, height:18, rx:9,
+        fill: isRoot ? '#0f2a1a' : '#3b0f8a',
+        stroke: isRoot ? '#3fb950' : '#a78bfa',
+        'stroke-width':1,
+      }}));
+      const bt = svgEl('text', {{
+        x:bx, y:by+1,
+        'text-anchor':'middle','dominant-baseline':'middle',
+        fill: isRoot ? '#3fb950' : '#c4b5fd',
+        'font-size':10,'font-weight':700,
+        'font-family':'Segoe UI,system-ui,sans-serif','pointer-events':'none',
+      }});
+      bt.textContent = badgeLabel;
+      svg.appendChild(bt);
+    }}
+  }});
+}}
+
+// Render after layout is stable (give SVG time to get real dimensions)
+requestAnimationFrame(() => {{ render(); }});
+window.addEventListener('resize', render);
+</script>
 </body>
 </html>"""
 
@@ -312,18 +600,15 @@ def _free_port(start: int = 7990) -> int:
     raise RuntimeError('No free port found near 7990')
 
 
-def open_graph_viewer(mermaid_code: str, title: str = "Schema Graph") -> str:
+def open_schema_viewer(result: dict) -> str:
     """
-    Serve the Mermaid diagram via a local HTTP server and open it as a new
-    tab in the existing browser (same window as the agent interface).
-
-    Using http://127.0.0.1:PORT instead of file:// avoids triggering the
-    system file handler (which may be a different program than the browser).
+    Serve the SVG schema viewer via a local HTTP server and open it as a new
+    tab in the existing browser. Returns the URL.
     """
     import threading, webbrowser
     from http.server import BaseHTTPRequestHandler, HTTPServer
 
-    body = _html_viewer(title, mermaid_code).encode('utf-8')
+    body = _schema_viewer_html(result).encode('utf-8')
 
     class _Handler(BaseHTTPRequestHandler):
         def do_GET(self):
@@ -343,7 +628,7 @@ def open_graph_viewer(mermaid_code: str, title: str = "Schema Graph") -> str:
 
     url = f'http://127.0.0.1:{port}'
     webbrowser.open(url)
-    print(f'\n  [graph viewer] {url}\n')
+    print(f'\n  [schema viewer] {url}\n')
     return url
 
 
@@ -366,11 +651,13 @@ def analyze(schema_text: str) -> dict:
     gyo = gyo_reduction(tables)
 
     result: dict = {
-        'tables': tables,
-        'intersection': {f'{a}∩{b}': v for (a, b), v in intersection.items()},
-        'is_acyclic': gyo['is_acyclic'],
-        'gyo_steps': gyo['steps'],
-        'root': gyo['root'],
+        'tables':             tables,
+        'intersection':       {f'{a}∩{b}': v for (a, b), v in intersection.items()},
+        'is_acyclic':         gyo['is_acyclic'],
+        'gyo_steps':          gyo['steps'],
+        'root':               gyo['root'],
+        'parent_map':         gyo['parent_map'],
+        'elimination_order':  gyo['elimination_order'],
         'intersection_mermaid': render_intersection_mermaid(tables, intersection),
     }
 

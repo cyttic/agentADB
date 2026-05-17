@@ -28,7 +28,7 @@ from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
 from typing_extensions import TypedDict
 
-from tools.full_reducer import analyze, open_graph_viewer
+from tools.full_reducer import analyze, open_schema_viewer
 
 
 # ══════════════════════════════════════════════════════════════
@@ -102,9 +102,9 @@ def analyze_schema_for_full_reducer(schema_text: str) -> str:
         if 'error' in result:
             return json.dumps({'error': result['error']})
 
-        # Open read-only browser view of intersection graph
+        # Open SVG schema viewer in browser
         try:
-            open_graph_viewer(result['intersection_mermaid'], "Intersection Graph")
+            open_schema_viewer(result)
         except Exception:
             pass
 
