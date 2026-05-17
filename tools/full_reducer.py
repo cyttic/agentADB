@@ -300,39 +300,51 @@ def _html_viewer(title: str, mermaid_code: str) -> str:
 </html>"""
 
 
+def _free_port(start: int = 7990) -> int:
+    import socket
+    for port in range(start, start + 20):
+        with socket.socket() as s:
+            try:
+                s.bind(('127.0.0.1', port))
+                return port
+            except OSError:
+                continue
+    raise RuntimeError('No free port found near 7990')
+
+
 def open_graph_viewer(mermaid_code: str, title: str = "Schema Graph") -> str:
     """
-    Write a temp HTML file with the Mermaid diagram and open it in the browser.
-    Tries xdg-open first (reliable on Linux desktops), falls back to webbrowser.
-    Always prints the file path so the user can open it manually if needed.
-    Returns the file path.
+    Serve the Mermaid diagram via a local HTTP server and open it as a new
+    tab in the existing browser (same window as the agent interface).
+
+    Using http://127.0.0.1:PORT instead of file:// avoids triggering the
+    system file handler (which may be a different program than the browser).
     """
-    import os, subprocess, tempfile, webbrowser
+    import threading, webbrowser
+    from http.server import BaseHTTPRequestHandler, HTTPServer
 
-    html = _html_viewer(title, mermaid_code)
-    fd, path = tempfile.mkstemp(suffix='.html', prefix='agentADB_graph_')
-    with os.fdopen(fd, 'w') as f:
-        f.write(html)
+    body = _html_viewer(title, mermaid_code).encode('utf-8')
 
-    opened = False
-    # xdg-open is the most reliable way to launch the default browser on Linux
-    try:
-        subprocess.Popen(['xdg-open', path],
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        opened = True
-    except FileNotFoundError:
-        pass
+    class _Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/html; charset=utf-8')
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
 
-    if not opened:
-        try:
-            webbrowser.open(f'file://{path}')
-            opened = True
-        except Exception:
+        def log_message(self, *_):
             pass
 
-    print(f"\n  [graph viewer] {'opened in browser' if opened else 'could not open browser'}")
-    print(f"  [graph viewer] file://{path}\n")
-    return path
+    port   = _free_port()
+    server = HTTPServer(('127.0.0.1', port), _Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    url = f'http://127.0.0.1:{port}'
+    webbrowser.open(url)
+    print(f'\n  [graph viewer] {url}\n')
+    return url
 
 
 # ── Main entry point ───────────────────────────────────────────
