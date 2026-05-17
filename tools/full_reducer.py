@@ -301,16 +301,37 @@ def _html_viewer(title: str, mermaid_code: str) -> str:
 
 
 def open_graph_viewer(mermaid_code: str, title: str = "Schema Graph") -> str:
-    """Write a temp HTML file and open it in the browser. Returns the file path."""
-    import os, tempfile, webbrowser
+    """
+    Write a temp HTML file with the Mermaid diagram and open it in the browser.
+    Tries xdg-open first (reliable on Linux desktops), falls back to webbrowser.
+    Always prints the file path so the user can open it manually if needed.
+    Returns the file path.
+    """
+    import os, subprocess, tempfile, webbrowser
+
     html = _html_viewer(title, mermaid_code)
     fd, path = tempfile.mkstemp(suffix='.html', prefix='agentADB_graph_')
     with os.fdopen(fd, 'w') as f:
         f.write(html)
+
+    opened = False
+    # xdg-open is the most reliable way to launch the default browser on Linux
     try:
-        webbrowser.open(f'file://{path}')
-    except Exception:
+        subprocess.Popen(['xdg-open', path],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        opened = True
+    except FileNotFoundError:
         pass
+
+    if not opened:
+        try:
+            webbrowser.open(f'file://{path}')
+            opened = True
+        except Exception:
+            pass
+
+    print(f"\n  [graph viewer] {'opened in browser' if opened else 'could not open browser'}")
+    print(f"  [graph viewer] file://{path}\n")
     return path
 
 
