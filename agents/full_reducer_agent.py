@@ -67,8 +67,11 @@ def analyze_schema_for_full_reducer(schema_text: str) -> str:
     ARGUMENT
     ---------
     schema_text:
-      Tables in standard format, separated by semicolons, commas, or newlines.
-      Example: "A(a,b,c); B(b,c,d); C(c,d,e)"
+      ONLY the tables that appear in the requested join, in standard format.
+      Do NOT include tables that exist in the database but are not part of
+      the join expression being analysed.
+      Example — problem has R1..R6 but join is R1 ⋈ R3 ⋈ R5 ⋈ R6:
+        schema_text = "R1(A,B,D); R3(A,D,E); R5(D,E,G); R6(F,G)"
 
     RETURNS
     -------
@@ -150,11 +153,17 @@ After both phases, the join is computed on dangling-tuple-free relations.
 
 ══ WORKFLOW ══
 
-1. Extract the schema from the user's message.
-   Schema format: A(a,b,c); B(b,c,d); C(c,d,e)
-   If missing, ask the user to provide it.
+1. Identify which tables participate in the JOIN expression.
+   Example: "R1 ⋈ R3 ⋈ R5 ⋈ R6" → only R1, R3, R5, R6 matter.
+   The problem may define MORE tables in the database (R1–R6), but only
+   include the ones that appear in the requested join in the schema text.
 
-2. Call analyze_schema_for_full_reducer(schema_text=...) ONCE.
+2. Build schema_text containing ONLY the participating tables.
+   Example: if the problem defines R1(A,B,D), R2(B,C,D), R3(A,D,E), R4(D,E,F),
+   R5(D,E,G), R6(F,G) but asks for R1 ⋈ R3 ⋈ R5 ⋈ R6, pass only:
+     "R1(A,B,D); R3(A,D,E); R5(D,E,G); R6(F,G)"
+
+3. Call analyze_schema_for_full_reducer(schema_text=...) ONCE.
 
 3. Format the output as follows:
 
