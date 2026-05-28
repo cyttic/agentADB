@@ -166,26 +166,67 @@
       "difficulty": "medium",
       "notion": "HW1 Task 4"
     },
-        {
+    {
       "id": 27,
-      "notion": "HW2 Task 1",
-      "task": "Given a distributed database with block size 4000 bytes, disk access cost td, and block transfer cost between processors ts. The system contains the following relations:\n\nCustomers(cid, cname, address)\nSales(pid, cid, amount)\nProducts(pid, pname, price)\n\nSales.cid and Sales.pid are foreign keys. Each field in each relation is 10 bytes. Customers has 10^5 records, Products has 10^8 records, Sales has 10^12 records.\n\nCustomers.address has 100 distinct values with uniform distribution. Sales.amount has 100 distinct values in range 1..100 with uniform distribution.\n\nThe database has 3 different sites: A, B, C. Customers is located at site C, Sales at site B, Products at site A. There is direct communication between all sites.\n\nDisk read/write cost per block is td, block transfer cost between sites is ts.\n\n(a) Calculate the execution cost of natural join of Products with Sales using semijoin, when the operation starts at site A. No need to account for query and result transfer.\n\n(b) Calculate the execution cost of natural join of Products with Sales using semijoin, when the operation starts at site B. No need to account for query transfer.",
+      "notion": "HW2 Task 1a",
+      "task": "Given a distributed database with block size 4000 bytes, disk access cost td, and block transfer cost between processors ts. The system contains the following relations:\n\nCustomers(cid, cname, address)\nSales(pid, cid, amount)\nProducts(pid, pname, price)\n\nSales.cid and Sales.pid are foreign keys. Each field in each relation is 10 bytes. Customers has 10^5 records, Products has 10^8 records, Sales has 10^12 records.\n\nCustomers.address has 100 distinct values with uniform distribution. Sales.amount has 100 distinct values in range 1..100 with uniform distribution.\n\nThe database has 3 different sites: A, B, C. Customers is located at site C, Sales at site B, Products at site A. There is direct communication between all sites.\n\nDisk read/write cost per block is td, block transfer cost between sites is ts.\n\nCalculate the execution cost of natural join of Products and Sales using semijoin, when the operation starts at site A. No need to account for query and result transfer.",
       "answer": "",
       "difficulty": "medium"
     },
     {
       "id": 28,
+      "notion": "HW2 Task 1b",
+      "task": "Given a distributed database with block size 4000 bytes, disk access cost td, and block transfer cost between processors ts. The system contains the following relations:\n\nCustomers(cid, cname, address)\nSales(pid, cid, amount)\nProducts(pid, pname, price)\n\nSales.cid and Sales.pid are foreign keys. Each field in each relation is 10 bytes. Customers has 10^5 records, Products has 10^8 records, Sales has 10^12 records.\n\nCustomers.address has 100 distinct values with uniform distribution. Sales.amount has 100 distinct values in range 1..100 with uniform distribution.\n\nThe database has 3 different sites: A, B, C. Customers is located at site C, Sales at site B, Products at site A. There is direct communication between all sites.\n\nDisk read/write cost per block is td, block transfer cost between sites is ts.\n\nCalculate the execution cost of natural join of Products and Sales using semijoin, when the operation starts at site B. No need to account for query transfer.",
+      "answer": "",
+      "difficulty": "medium"
+    },
+    {
+      "id": 29,
       "notion": "HW2 Task 2",
       "task": "Answer question 1 when the communication graph is A-C-B, meaning there is no direct communication between sites A and B.",
       "answer": "",
       "difficulty": "medium"
     },
     {
-      "id": 29,
-      "notion": "HW2 Task 3",
-      "task": "Given the following relations:\n\nR1(A,B,D), R2(B,C,D), R3(A,D,E), R4(D,E,F), R5(D,E,G), R6(F,G)\n\nFor each of the following cases, check whether an optimal semijoin can be performed. If so, detail the execution steps of the FullReducer algorithm.\n\n(a) R1 ⋈ R2 ⋈ R4 ⋈ R5 ⋈ R6\n(b) R1 ⋈ R3 ⋈ R5 ⋈ R6",
+      "id": 30,
+      "notion": "HW2 Task 3a",
+      "task": "Given the following relations:\n\nR1(A,B,D), R2(B,C,D), R3(A,D,E), R4(D,E,F), R5(D,E,G), R6(F,G)\n\nCheck whether an optimal semijoin can be performed for the following join. If so, detail the execution steps of the FullReducer algorithm.\n\nR1 ⋈ R2 ⋈ R4 ⋈ R5 ⋈ R6",
       "answer": "",
       "difficulty": "high"
+    },
+    {
+      "id": 31,
+      "notion": "HW2 Task 3b",
+      "task": "Given the following relations:\n\nR1(A,B,D), R2(B,C,D), R3(A,D,E), R4(D,E,F), R5(D,E,G), R6(F,G)\n\nCheck whether an optimal semijoin can be performed for the following join. If so, detail the execution steps of the FullReducer algorithm.\n\nR1 ⋈ R3 ⋈ R5 ⋈ R6",
+      "answer": "",
+      "difficulty": "high"
+    },
+    {
+      "id": 32,
+      "notion": "HW2 Task 4",
+      "task": "Given a partial Hasse diagram of data cubes and subcubes along with access costs for each subcube:\n\n- A: 300\n- B: 100, C: 250, D: 100\n- E: 80, F: 90\n\nHierarchy (parent -> children):\n- A -> B, C, D\n- B -> E\n- C -> E, F\n- D -> F\n\nApply Ullman's approximation algorithm to select N=3 optimal cubes for materialization. Detail all steps and calculations.",
+      "answer": "",
+      "difficulty": "high"
+    },
+    {
+      "id": 33,
+      "notion": "HW2 Task 4 - version without hierarchy",
+      "task": "Given a partial Hasse diagram of data cubes and subcubes along with access costs for each subcube. Apply Ullman's approximation algorithm to select N=3 optimal cubes for materialization. Detail all steps and calculations.",
+      "answer": "",
+      "difficulty": "high"
+    },{
+      "id": 34,
+      "notion": "task from the lesson",
+      "task": "Given the following relations:\n\n  R(a,b), T(b,c,d), U(c,d,e) \n\nCheck whether an optimal semijoin can be performed for the following join. If so, detail the execution steps of the FullReducer algorithm.\n\n   R ⋈ T ⋈  U",
+      "answer": "",
+      "difficulty": "low"
+    },
+    {
+      "id": 35,
+      "notion": "task from lesson",
+      "task": "Даны таблмцы R(a,b), S(b,c). Ключи: R(b), S(c). R располагается на сервере A, S на сервере B. Размер таблицы R = 10^5 блоков, размер таблицы S = 10^7 блоков. Вероятность совпадения по атрибуиу = 0.2. Выполнить semijoin R and S",
+      "answer": "",
+      "difficulty": "medium"
     }
   ]
 }
