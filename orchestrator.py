@@ -24,6 +24,7 @@ from agents.datacube_agent        import build_agent as build_datacube_agent
 from agents.full_reducer_agent    import build_agent as build_fullreducer_agent
 from agents.apriori_agent          import build_agent as build_apriori_agent
 from agents.apriori_tid_agent      import build_agent as build_apriori_tid_agent
+from agents.association_rules_agent import build_agent as build_assoc_rules_agent
 from agents.ra_proposal_agent     import generate_ra_proposals
 from llm_factory                  import build_llm, LLMConfig
 
@@ -38,7 +39,7 @@ from llm_factory                  import build_llm, LLMConfig
 
 ROUTER_PROMPT = """Your task: read the user message and output exactly one word.
 
-The word must be one of: SERIAL, QUERY, JOIN, SEMIJOIN, MAPREDUCE, DATACUBE, FULLREDUCER, APRIORITID, APRIORI, UNKNOWN
+The word must be one of: SERIAL, QUERY, JOIN, SEMIJOIN, MAPREDUCE, DATACUBE, FULLREDUCER, APRIORITID, APRIORI, RULES, UNKNOWN
 
 Rules:
 - Output SERIAL if the message is about transaction schedules, read/write operations, serializability, precedence graphs, or conflict analysis.
@@ -49,7 +50,8 @@ Rules:
 - Output DATACUBE if the message is about data cube materialisation, Hasse diagrams of cubes or subcubes, Ullman's algorithm, selecting N optimal views/cubes, or OLAP lattice optimisation.
 - Output FULLREDUCER if the message mentions "full reducer", "full-reducer", dangling tuples, acyclic join reduction, or asks to apply the semi-join-based Full Reducer algorithm to a schema.
 - Output APRIORITID if the message asks for the Apriori-TID method specifically, or mentions tid_list / tid list / "vertical" method, or defines support as |I.tid_list| / |D| (support from a list of transaction ids).
-- Output APRIORI if the message is about data mining / frequent itemsets with the plain Apriori method: a transaction table (TID + items), support/confidence thresholds, association rules, or maximal/closed frequent itemsets — and it does NOT ask for Apriori-TID or tid_lists.
+- Output RULES if the message asks to find association rules from a transaction table: keywords "association rule(s)", "confidence", conf(I->J), rules with confidence ≥ C, or "I -> J".
+- Output APRIORI if the message is about data mining / frequent itemsets with the plain Apriori method: a transaction table (TID + items), support thresholds, or maximal/closed frequent itemsets — and it does NOT ask for Apriori-TID, tid_lists, or association rules.
 - Output UNKNOWN if it is neither.
 
 Do NOT explain. Do NOT add punctuation. Output only the single word.
@@ -128,8 +130,17 @@ Answer: APRIORI
 Message: "Given transactions, use Apriori to find frequent itemsets with min support 0.4."
 Answer: APRIORI
 
-Message: "Find all association rules / maximal frequent itemsets from this transaction table."
+Message: "Find all maximal / closed frequent itemsets from this transaction table, S = 0.5."
 Answer: APRIORI
+
+Message: "TID 1:A,B 2:A,B,C 3:A,C,D 4:C,D. Find all association rules with confidence ≥ 0.5, S = 0.5."
+Answer: RULES
+
+Message: "Calculate all association rules. conf(I->J) = sup(I U J)/sup(I). C = 0.6, S = 0.5."
+Answer: RULES
+
+Message: "From this transaction table find every rule I -> J with confidence at least C = 0.7."
+Answer: RULES
 
 Message: "TID 1:A,B 2:A,B,C 3:A,C,D 4:C,D. Find all frequent itemsets using the Apriori-TID method, D = S = 0.5."
 Answer: APRIORITID
@@ -170,7 +181,7 @@ RED    = "\033[31m"
 #    instead of doing a strict equality check
 # ══════════════════════════════════════════════════════════════
 
-_VALID = {"SERIAL", "QUERY", "JOIN", "SEMIJOIN", "MAPREDUCE", "DATACUBE", "FULLREDUCER", "APRIORI", "APRIORITID", "UNKNOWN"}
+_VALID = {"SERIAL", "QUERY", "JOIN", "SEMIJOIN", "MAPREDUCE", "DATACUBE", "FULLREDUCER", "APRIORI", "APRIORITID", "RULES", "UNKNOWN"}
 
 def _extract_domain(raw: str) -> str:
     """
@@ -212,6 +223,7 @@ class Orchestrator:
         self.fullreducer_agent   = build_fullreducer_agent(llm=self.llm)
         self.apriori_agent       = build_apriori_agent(llm=self.llm)
         self.apriori_tid_agent   = build_apriori_tid_agent(llm=self.llm)
+        self.assoc_rules_agent   = build_assoc_rules_agent(llm=self.llm)
 
         self.serial_history:   list = []
         self.query_history:    list = []
@@ -369,6 +381,15 @@ class Orchestrator:
             )
             return last_ai.content if last_ai else "(no response)"
 
+        elif domain == "RULES":
+            from langchain_core.messages import AIMessage as _AI
+            result = self.assoc_rules_agent.invoke({"messages": [HumanMessage(content=user_input)]})
+            last_ai = next(
+                (m for m in reversed(result["messages"]) if isinstance(m, _AI)),
+                None,
+            )
+            return last_ai.content if last_ai else "(no response)"
+
         elif domain == "APRIORITID":
             from langchain_core.messages import AIMessage as _AI
             result = self.apriori_tid_agent.invoke({"messages": [HumanMessage(content=user_input)]})
@@ -402,5 +423,6 @@ class Orchestrator:
                 "  • Full Reducer algorithm (acyclic join, GYO reduction, semi-join phases)\n"
                 "  • Data mining — frequent itemsets with Apriori (transaction table + support)\n"
                 "  • Data mining — frequent itemsets with Apriori-TID (tid_list / vertical method)\n"
+                "  • Data mining — association rules (confidence ≥ C from a transaction table)\n"
                 "Please clarify your question."
             )
