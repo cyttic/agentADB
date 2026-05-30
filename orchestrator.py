@@ -38,7 +38,7 @@ from llm_factory                  import build_llm, LLMConfig
 
 ROUTER_PROMPT = """Your task: read the user message and output exactly one word.
 
-The word must be one of: SERIAL, QUERY, JOIN, SEMIJOIN, MAPREDUCE, DATACUBE, FULLREDUCER, APRIORI, UNKNOWN
+The word must be one of: SERIAL, QUERY, JOIN, SEMIJOIN, MAPREDUCE, DATACUBE, FULLREDUCER, APRIORITID, APRIORI, UNKNOWN
 
 Rules:
 - Output SERIAL if the message is about transaction schedules, read/write operations, serializability, precedence graphs, or conflict analysis.
@@ -48,7 +48,8 @@ Rules:
 - Output MAPREDUCE if the message is about a Map-Reduce task: word count, distributed aggregation, inverted index, or any task described in terms of map and reduce phases over distributed data.
 - Output DATACUBE if the message is about data cube materialisation, Hasse diagrams of cubes or subcubes, Ullman's algorithm, selecting N optimal views/cubes, or OLAP lattice optimisation.
 - Output FULLREDUCER if the message mentions "full reducer", "full-reducer", dangling tuples, acyclic join reduction, or asks to apply the semi-join-based Full Reducer algorithm to a schema.
-- Output APRIORI if the message is about data mining / frequent itemsets: a transaction table (TID + items), the Apriori or Apriori-TID method, support/confidence thresholds, association rules, or maximal/closed frequent itemsets.
+- Output APRIORITID if the message asks for the Apriori-TID method specifically, or mentions tid_list / tid list / "vertical" method, or defines support as |I.tid_list| / |D| (support from a list of transaction ids).
+- Output APRIORI if the message is about data mining / frequent itemsets with the plain Apriori method: a transaction table (TID + items), support/confidence thresholds, association rules, or maximal/closed frequent itemsets — and it does NOT ask for Apriori-TID or tid_lists.
 - Output UNKNOWN if it is neither.
 
 Do NOT explain. Do NOT add punctuation. Output only the single word.
@@ -130,6 +131,15 @@ Answer: APRIORI
 Message: "Find all association rules / maximal frequent itemsets from this transaction table."
 Answer: APRIORI
 
+Message: "TID 1:A,B 2:A,B,C 3:A,C,D 4:C,D. Find all frequent itemsets using the Apriori-TID method, D = S = 0.5."
+Answer: APRIORITID
+
+Message: "Use Apriori-TID: build tid_list per item, Support(I) = |I.tid_list|/|D|, list candidates and frequent sets each step."
+Answer: APRIORITID
+
+Message: "Solve with the AprioriTID (tid list) method, support threshold 0.5."
+Answer: APRIORITID
+
 Message: "What is the weather today?"
 Answer: UNKNOWN
 
@@ -160,7 +170,7 @@ RED    = "\033[31m"
 #    instead of doing a strict equality check
 # ══════════════════════════════════════════════════════════════
 
-_VALID = {"SERIAL", "QUERY", "JOIN", "SEMIJOIN", "MAPREDUCE", "DATACUBE", "FULLREDUCER", "APRIORI", "UNKNOWN"}
+_VALID = {"SERIAL", "QUERY", "JOIN", "SEMIJOIN", "MAPREDUCE", "DATACUBE", "FULLREDUCER", "APRIORI", "APRIORITID", "UNKNOWN"}
 
 def _extract_domain(raw: str) -> str:
     """
@@ -173,6 +183,10 @@ def _extract_domain(raw: str) -> str:
     Falls back to UNKNOWN if nothing found.
     """
     upper = raw.upper()
+    # APRIORI-TID may arrive hyphenated/spaced ("APRIORI-TID", "APRIORI TID");
+    # check the compacted form first so it wins over the bare "APRIORI" token.
+    if "APRIORITID" in upper.replace("-", "").replace("_", "").replace(" ", ""):
+        return "APRIORITID"
     # Try to find any of the valid keywords in the response
     for word in re.findall(r"[A-Z]+", upper):
         if word in _VALID:
@@ -197,6 +211,7 @@ class Orchestrator:
         self.datacube_agent      = build_datacube_agent(llm=self.llm)
         self.fullreducer_agent   = build_fullreducer_agent(llm=self.llm)
         self.apriori_agent       = build_apriori_agent(llm=self.llm)
+        self.apriori_tid_agent   = build_apriori_tid_agent(llm=self.llm)
 
         self.serial_history:   list = []
         self.query_history:    list = []
@@ -354,6 +369,15 @@ class Orchestrator:
             )
             return last_ai.content if last_ai else "(no response)"
 
+        elif domain == "APRIORITID":
+            from langchain_core.messages import AIMessage as _AI
+            result = self.apriori_tid_agent.invoke({"messages": [HumanMessage(content=user_input)]})
+            last_ai = next(
+                (m for m in reversed(result["messages"]) if isinstance(m, _AI)),
+                None,
+            )
+            return last_ai.content if last_ai else "(no response)"
+
         elif domain == "APRIORI":
             from langchain_core.messages import AIMessage as _AI
             result = self.apriori_agent.invoke({"messages": [HumanMessage(content=user_input)]})
@@ -377,5 +401,6 @@ class Orchestrator:
                 "  • Data-cube materialisation (Ullman's algorithm, Hasse diagrams)\n"
                 "  • Full Reducer algorithm (acyclic join, GYO reduction, semi-join phases)\n"
                 "  • Data mining — frequent itemsets with Apriori (transaction table + support)\n"
+                "  • Data mining — frequent itemsets with Apriori-TID (tid_list / vertical method)\n"
                 "Please clarify your question."
             )
