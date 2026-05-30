@@ -25,6 +25,7 @@ from agents.full_reducer_agent    import build_agent as build_fullreducer_agent
 from agents.apriori_agent          import build_agent as build_apriori_agent
 from agents.apriori_tid_agent      import build_agent as build_apriori_tid_agent
 from agents.association_rules_agent import build_agent as build_assoc_rules_agent
+from agents.maximal_itemsets_agent  import build_agent as build_maximal_agent
 from agents.ra_proposal_agent     import generate_ra_proposals
 from llm_factory                  import build_llm, LLMConfig
 
@@ -39,7 +40,7 @@ from llm_factory                  import build_llm, LLMConfig
 
 ROUTER_PROMPT = """Your task: read the user message and output exactly one word.
 
-The word must be one of: SERIAL, QUERY, JOIN, SEMIJOIN, MAPREDUCE, DATACUBE, FULLREDUCER, APRIORITID, APRIORI, RULES, UNKNOWN
+The word must be one of: SERIAL, QUERY, JOIN, SEMIJOIN, MAPREDUCE, DATACUBE, FULLREDUCER, APRIORITID, APRIORI, RULES, MAXIMAL, UNKNOWN
 
 Rules:
 - Output SERIAL if the message is about transaction schedules, read/write operations, serializability, precedence graphs, or conflict analysis.
@@ -51,7 +52,8 @@ Rules:
 - Output FULLREDUCER if the message mentions "full reducer", "full-reducer", dangling tuples, acyclic join reduction, or asks to apply the semi-join-based Full Reducer algorithm to a schema.
 - Output APRIORITID if the message asks for the Apriori-TID method specifically, or mentions tid_list / tid list / "vertical" method, or defines support as |I.tid_list| / |D| (support from a list of transaction ids).
 - Output RULES if the message asks to find association rules from a transaction table: keywords "association rule(s)", "confidence", conf(I->J), rules with confidence ≥ C, or "I -> J".
-- Output APRIORI if the message is about data mining / frequent itemsets with the plain Apriori method: a transaction table (TID + items), support thresholds, or maximal/closed frequent itemsets — and it does NOT ask for Apriori-TID, tid_lists, or association rules.
+- Output MAXIMAL if the message asks for maximal frequent itemsets (a frequent itemset with no frequent proper superset) from a transaction table.
+- Output APRIORI if the message is about data mining / frequent itemsets with the plain Apriori method: a transaction table (TID + items) and a support threshold — and it does NOT ask for Apriori-TID, tid_lists, association rules, or maximal/closed itemsets.
 - Output UNKNOWN if it is neither.
 
 Do NOT explain. Do NOT add punctuation. Output only the single word.
@@ -130,8 +132,11 @@ Answer: APRIORI
 Message: "Given transactions, use Apriori to find frequent itemsets with min support 0.4."
 Answer: APRIORI
 
-Message: "Find all maximal / closed frequent itemsets from this transaction table, S = 0.5."
-Answer: APRIORI
+Message: "TID 1:A,B 2:A,B,C 3:A,C,D 4:C,D. Find the maximal frequent itemsets, S = 0.5."
+Answer: MAXIMAL
+
+Message: "Find all maximal frequent itemsets (no frequent proper superset) from this transaction table."
+Answer: MAXIMAL
 
 Message: "TID 1:A,B 2:A,B,C 3:A,C,D 4:C,D. Find all association rules with confidence ≥ 0.5, S = 0.5."
 Answer: RULES
@@ -181,7 +186,7 @@ RED    = "\033[31m"
 #    instead of doing a strict equality check
 # ══════════════════════════════════════════════════════════════
 
-_VALID = {"SERIAL", "QUERY", "JOIN", "SEMIJOIN", "MAPREDUCE", "DATACUBE", "FULLREDUCER", "APRIORI", "APRIORITID", "RULES", "UNKNOWN"}
+_VALID = {"SERIAL", "QUERY", "JOIN", "SEMIJOIN", "MAPREDUCE", "DATACUBE", "FULLREDUCER", "APRIORI", "APRIORITID", "RULES", "MAXIMAL", "UNKNOWN"}
 
 def _extract_domain(raw: str) -> str:
     """
@@ -224,6 +229,7 @@ class Orchestrator:
         self.apriori_agent       = build_apriori_agent(llm=self.llm)
         self.apriori_tid_agent   = build_apriori_tid_agent(llm=self.llm)
         self.assoc_rules_agent   = build_assoc_rules_agent(llm=self.llm)
+        self.maximal_agent       = build_maximal_agent(llm=self.llm)
 
         self.serial_history:   list = []
         self.query_history:    list = []
@@ -381,6 +387,15 @@ class Orchestrator:
             )
             return last_ai.content if last_ai else "(no response)"
 
+        elif domain == "MAXIMAL":
+            from langchain_core.messages import AIMessage as _AI
+            result = self.maximal_agent.invoke({"messages": [HumanMessage(content=user_input)]})
+            last_ai = next(
+                (m for m in reversed(result["messages"]) if isinstance(m, _AI)),
+                None,
+            )
+            return last_ai.content if last_ai else "(no response)"
+
         elif domain == "RULES":
             from langchain_core.messages import AIMessage as _AI
             result = self.assoc_rules_agent.invoke({"messages": [HumanMessage(content=user_input)]})
@@ -424,5 +439,6 @@ class Orchestrator:
                 "  • Data mining — frequent itemsets with Apriori (transaction table + support)\n"
                 "  • Data mining — frequent itemsets with Apriori-TID (tid_list / vertical method)\n"
                 "  • Data mining — association rules (confidence ≥ C from a transaction table)\n"
+                "  • Data mining — maximal frequent itemsets (no frequent proper superset)\n"
                 "Please clarify your question."
             )
