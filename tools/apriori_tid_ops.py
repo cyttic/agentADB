@@ -92,11 +92,21 @@ def run_apriori_tid(transactions_json: str,
     out.append("  Support(I) = |I.tid_list| / |D|")
     out.append("")
 
+    # ── condition: compact restatement of the inputs ──────────
+    # |D| = table size, S from the conditions, and each item's tid_list
+    # (the rows where that item appears).
+    items = sorted({it for _tid, row in transactions for it in row})
+    item_tids = {it: {tid for tid, row in transactions if it in row} for it in items}
+    cond_parts = [f"|D| = {N}", f"S = {_fmt_ratio(S)}"]
+    cond_parts += [f"{it}.tid_list = {_tids_str(item_tids[it])}" for it in items]
+    out.append("Condition:")
+    out.append(f"  Apriori-TID({', '.join(cond_parts)})")
+    out.append("")
+
     tidmap = {}                # frozenset(itemset) -> set(tids), frequent only
     frequent_levels = {}       # k -> list[frozenset]
 
     # ── Step 1: singleton tid_lists ───────────────────────────
-    items = sorted({it for _tid, row in transactions for it in row})
     out.append("═" * W)
     out.append("Step 1 — singletons: build a tid_list for every item")
     out.append("═" * W)
@@ -106,7 +116,7 @@ def run_apriori_tid(transactions_json: str,
 
     f1 = []
     for cand in c1:
-        tids = {tid for tid, row in transactions if cand <= row}
+        tids = item_tids[next(iter(cand))]
         sup = len(tids) / N
         ok = sup >= S
         verdict = "→ frequent" if ok else "→ pruned"
