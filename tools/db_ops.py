@@ -5,6 +5,8 @@ Pure cost-calculation tools for parallel database operations.
 
 All sizes are expressed in BLOCKS (never bytes — convert before using).
 All cost outputs are SYMBOLIC strings like "9 * 10^3 * (t_d + t_s)" — never reduced.
+Every number is rendered in scientific style via _fmt (a * 10^k, mantissa in
+[1, 10)); no loose number greater than 10 ever appears in the output.
 
 Three atomic operations:
   - Select  — 3 algorithms, decision based on question type + data distribution
@@ -17,6 +19,7 @@ by calling them in sequence and combining their cost outputs.
 
 import math
 import json
+import re
 
 
 # ══════════════════════════════════════════════════════════════
@@ -33,14 +36,32 @@ def records_to_blocks(record_count, record_size_bytes, block_size):
 
 
 def _fmt(n: int) -> str:
-    """Format an integer as 10^k when it is an exact power of 10 (k >= 2), else as plain digits."""
-    if n <= 0:
+    """
+    Render a number in scientific style: any value > 10 becomes  a * 10^k
+    with the mantissa a in [1, 10).  Numbers <= 10 are left as plain digits
+    (the course convention forbids loose numbers greater than 10).
+
+        1000   -> 10^3
+        1500   -> 1.5 * 10^3
+        2000   -> 2 * 10^3
+        20000  -> 2 * 10^4
+        16500  -> 1.65 * 10^4
+        40     -> 4 * 10^1
+        10     -> 10
+        9      -> 9
+    """
+    try:
+        n = int(n)
+    except (TypeError, ValueError):
         return str(n)
-    log = math.log10(n)
-    k = round(log)
-    if k >= 2 and abs(log - k) < 1e-9:
-        return f"10^{k}"
-    return str(n)
+    if n <= 10:                      # 0..10 (and negatives) stay as-is
+        return str(n)
+    s    = str(n)
+    k    = len(s) - 1                # exponent = floor(log10(n)) for a positive int
+    frac = s[1:].rstrip("0")         # mantissa digits after the leading one
+    if not frac:                     # exact  a * 10^k  with a single-digit mantissa
+        return f"10^{k}" if s[0] == "1" else f"{s[0]} * 10^{k}"
+    return f"{s[0]}.{frac} * 10^{k}"
 
 
 def compute_table_blocks_info(
@@ -65,14 +86,14 @@ def compute_table_blocks_info(
     name = table_name or "T"
     explanation = "\n".join([
         f"Block count calculation for table {name}:",
-        f"  Row size   : {num_attributes} attributes × {cell_size_bytes} bytes/cell"
-        f" = {row_size_bytes} bytes/row",
-        f"  Table size : {record_count} records × {row_size_bytes} bytes/row"
-        f" = {table_size_bytes} bytes",
-        f"  Block count: ceil({table_size_bytes} / {block_size_bytes})"
-        f" = {block_count} blocks",
-        f"  !! USE block_count={block_count} IN ALL SUBSEQUENT TOOL CALLS"
-        f" (select_cost / join_cost / sort_cost). DO NOT use record_count={record_count}.",
+        f"  Row size   : {_fmt(num_attributes)} attributes × {_fmt(cell_size_bytes)} bytes/cell"
+        f" = {_fmt(row_size_bytes)} bytes/row",
+        f"  Table size : {_fmt(record_count)} records × {_fmt(row_size_bytes)} bytes/row"
+        f" = {_fmt(table_size_bytes)} bytes",
+        f"  Block count: ceil({_fmt(table_size_bytes)} / {_fmt(block_size_bytes)})"
+        f" = {_fmt(block_count)} blocks",
+        f"  !! USE block_count={_fmt(block_count)} IN ALL SUBSEQUENT TOOL CALLS"
+        f" (select_cost / join_cost / sort_cost). DO NOT use record_count={_fmt(record_count)}.",
     ])
 
     return {
@@ -331,10 +352,11 @@ def select_cost(block_count, num_processors, algorithm, relevant_processors=1):
 
     elif algorithm == "alg3":
         rel_p   = relevant_processors if relevant_processors else 1
+        rel_p_s = _fmt(rel_p)
         elapsed = f"{bs_s} * t_d"
-        total   = f"{rel_p} * {bs_s} * t_d" if rel_p > 1 else f"{bs_s} * t_d"
+        total   = f"{rel_p_s} * {bs_s} * t_d" if rel_p > 1 else f"{bs_s} * t_d"
         explanation = (
-            f"alg3: only {rel_p} relevant processor(s) participate.\n"
+            f"alg3: only {rel_p_s} relevant processor(s) participate.\n"
             f"  Elapsed = {elapsed}\n"
             f"  Total   = {total}"
         )
@@ -436,14 +458,20 @@ def sort_cost(block_count, num_processors, algorithm):
     B  = block_count
     bs = math.ceil(B / p)   # blocks per proc
 
+    # Scientific-style strings (no loose numbers > 10 in the output).
+    bs_s   = _fmt(bs)
+    B_s    = _fmt(B)
+    p_s    = _fmt(p)
+    pm1_s  = _fmt(p - 1)
+
     if algorithm == "alg1":
         # ── Step-by-step symbolic strings ──────────────────
-        step1_e = f"3 * {bs} * t_d"
-        step2_e = f"{bs} * {p-1} * t_s"
-        step3_e = f"{p-1} * {bs} * (t_s + t_d)"
-        step4_e = f"{B} * t_d"
+        step1_e = f"3 * {bs_s} * t_d"
+        step2_e = f"{bs_s} * {pm1_s} * t_s"
+        step3_e = f"{pm1_s} * {bs_s} * (t_s + t_d)"
+        step4_e = f"{B_s} * t_d"
 
-        step1_t = f"3 * {B} * t_d"     # all p procs do step1
+        step1_t = f"3 * {B_s} * t_d"    # all p procs do step1
         step2_t = step2_e               # only (p-1) procs send — same as elapsed
         step3_t = step3_e               # only proc 0 receives — same as elapsed
         step4_t = step4_e               # only proc 0 merges — same as elapsed
@@ -453,22 +481,22 @@ def sort_cost(block_count, num_processors, algorithm):
 
         explanation = "\n".join([
             "alg1 (local sort + gather + merge):",
-            f"  Step 1 - all {p} procs sort {bs} blocks locally:  {step1_e}  (elapsed) / {step1_t}  (total)",
-            f"  Step 2 - {p-1} procs send results to proc 0:      {step2_e}",
-            f"  Step 3 - proc 0 reads {p-1} incoming runs:        {step3_e}",
-            f"  Step 4 - proc 0 merges all {p} runs:              {step4_e}",
+            f"  Step 1 - all {p_s} procs sort {bs_s} blocks locally:  {step1_e}  (elapsed) / {step1_t}  (total)",
+            f"  Step 2 - {pm1_s} procs send results to proc 0:      {step2_e}",
+            f"  Step 3 - proc 0 reads {pm1_s} incoming runs:        {step3_e}",
+            f"  Step 4 - proc 0 merges all {p_s} runs:              {step4_e}",
             "",
             f"  Elapsed = {elapsed}",
             f"  Total   = {total}",
         ])
 
     elif algorithm == "alg2":
-        elapsed = f"3 * {bs} * t_d"
-        total   = f"3 * {B} * t_d"
+        elapsed = f"3 * {bs_s} * t_d"
+        total   = f"3 * {B_s} * t_d"
 
         explanation = "\n".join([
             "alg2 (fully local sort - range partition matches sort field):",
-            f"  Each of {p} procs sorts its {bs} blocks independently, no communication.",
+            f"  Each of {p_s} procs sorts its {bs_s} blocks independently, no communication.",
             "",
             f"  Elapsed = {elapsed}",
             f"  Total   = {total}",
@@ -608,6 +636,8 @@ def parallel_join_cost(
         # ── Algorithm 1: LOCAL JOIN ──────────────────────────────
         elapsed = f"3 * ({sum_str}) * t_d"
         total   = f"{p_s} * ({elapsed})"
+        elapsed_collected = simplify_cost_expr(elapsed)
+        total_collected   = simplify_cost_expr(total)
 
         explanation = "\n".join([
             f"Join: {name_a} * {name_b}  [LOCAL JOIN -- co-located data]",
@@ -621,7 +651,9 @@ def parallel_join_cost(
             f"  Local Join on every server:  3 * ({sum_str}) * t_d",
             f"",
             f"  Elapsed = {elapsed}",
+            f"          = {elapsed_collected}   (collected)",
             f"  Total   = {total}",
+            f"          = {total_collected}   (collected)",
         ])
 
         return {
@@ -636,6 +668,8 @@ def parallel_join_cost(
             "num_processors":    p,
             "elapsed":           elapsed,
             "total":             total,
+            "elapsed_collected": elapsed_collected,
+            "total_collected":   total_collected,
             "explanation":       explanation,
         }
 
@@ -656,12 +690,15 @@ def parallel_join_cost(
         bs_out_s = _fmt(bs_out_v)
         bs_in_s  = _fmt(bs_in_v)
 
-        step1 = f"{bs_out_s} * t_d + {p - 1} * {bs_out_s} * t_s"
-        step2 = f"{p - 1} * {bs_out_s} * (t_s + t_d)"
+        pm1_s = _fmt(p - 1)
+        step1 = f"{bs_out_s} * t_d + {pm1_s} * {bs_out_s} * t_s"
+        step2 = f"{pm1_s} * {bs_out_s} * (t_s + t_d)"
         step3 = f"3 * ({B_out_s} + {bs_in_s}) * t_d"
 
         elapsed = f"({step1}) + ({step2}) + ({step3})"
         total   = f"{p_s} * ({elapsed})"
+        elapsed_collected = simplify_cost_expr(elapsed)
+        total_collected   = simplify_cost_expr(total)
 
         explanation = "\n".join([
             f"Join: {name_a} ⋈ {name_b}  [REGULAR JOIN]",
@@ -673,10 +710,10 @@ def parallel_join_cost(
             f"  → broadcasting {nm_out} (smaller table) is the cheaper ordering",
             f"",
             f"  Step 1 [send]    — each server sends its {nm_out} partition"
-            f" to (p-1) = {p - 1} others:",
+            f" to (p-1) = {pm1_s} others:",
             f"    {step1}",
             f"  Step 2 [receive] — each server receives {nm_out}"
-            f" from (p-1) = {p - 1} others:",
+            f" from (p-1) = {pm1_s} others:",
             f"    {step2}",
             f"  Step 3 [join]    — each server joins full {nm_out} ({B_out_s} blocks,"
             f" received in full) with its local {nm_in} partition ({bs_in_s} blocks/server):",
@@ -685,7 +722,9 @@ def parallel_join_cost(
             f" NOT B_in={B_in_s} (inner total)",
             f"",
             f"  Elapsed = {elapsed}",
+            f"          = {elapsed_collected}   (collected)",
             f"  Total   = {p_s} * Elapsed = {total}",
+            f"          = {total_collected}   (collected)",
         ])
 
         return {
@@ -705,8 +744,1074 @@ def parallel_join_cost(
             "step3":             step3,
             "elapsed":           elapsed,
             "total":             total,
+            "elapsed_collected": elapsed_collected,
+            "total_collected":   total_collected,
             "explanation":       explanation,
         }
+
+
+# ══════════════════════════════════════════════════════════════
+#  SELECT-then-BROADCAST JOIN  (with selectivity, symbolic-aware)
+# ══════════════════════════════════════════════════════════════
+#
+# This is the detailed "course style" cost model for a query of the form
+#     π(...)( σ(...)(R)  ⋈  σ(...)(S) )
+# on round-robin data with p processors.
+#
+# The SMALLER table (after we know its block count) is the OUTER table:
+# it is read, filtered, and broadcast to every server; the LARGER table
+# stays local. Each server then joins the full broadcast set with its own
+# filtered partition of the inner table.
+#
+# Per-server elapsed steps (read full / write filtered):
+#   1) read + select outer        :  bs_out                         * t_d
+#   2) send filtered outer to p-1  : (p-1) * s_out * bs_out          * t_s
+#   3) receive from p-1            : (p-1) * s_out * bs_out          * t_s   (ts only!)
+#   4) write full broadcast outer  :  p     * s_out * bs_out         * t_d
+#   5) read + select inner        :  bs_in                          * t_d
+#   6) write filtered inner       :  s_in  * bs_in                  * t_d
+#   7) natural join               :  3 * (p*s_out*bs_out + s_in*bs_in) * t_d
+#   8) projection                 :  0 (negligible)  — overridable
+#
+#   Elapsed = Σ(td steps) * t_d + Σ(ts steps) * t_s
+#   Total   = p * Elapsed
+#
+# Selectivity s_out / s_in is either:
+#   • a numeric fraction (uniform attribute: matching values / distinct values),
+#     e.g. 1/2 — it folds into the numeric coefficients, OR
+#   • a SYMBOLIC variable name (unknown distribution), e.g. "Sp" — it stays in
+#     the expression and propagates into Elapsed and Total.
+#   • None / "" — no pre-join filter on that table (selectivity = 1).
+
+
+def _frac_disp(num, den):
+    """Display a fraction num/den as a short decimal (0.9) when clean, else 'num/den'."""
+    if den == 0:
+        return f"{num}/{den}"
+    v = num / den
+    s = ("%.6f" % v).rstrip("0").rstrip(".")
+    digits = len(s) - (1 if "." in s else 0)
+    return s if digits <= 4 else f"{num}/{den}"
+
+
+def _sel_spec(sel):
+    """
+    Normalise a selectivity spec into (coeff, symbol, display).
+
+    Accepts:
+      None / ""        → (1.0, "", "")          no filter, selectivity 1
+      0.5  / 1         → (0.5, "", "0.5")        numeric
+      "1/2"            → (0.5, "", "1/2")         fraction (kept for display)
+      "Sp"             → (1.0, "Sp", "Sp")        symbolic variable
+    """
+    if sel is None or sel == "":
+        return 1.0, "", ""
+    if isinstance(sel, (int, float)):
+        v = float(sel)
+        disp = str(int(v)) if abs(v - round(v)) < 1e-12 else str(v)
+        return v, "", disp
+    s = str(sel).strip()
+    m = re.match(r'^(\d+)\s*/\s*(\d+)$', s)
+    if m:
+        a, b = int(m.group(1)), int(m.group(2))
+        return a / b, "", f"{a}/{b}"
+    try:
+        v = float(s)
+        disp = str(int(v)) if abs(v - round(v)) < 1e-12 else str(v)
+        return v, "", disp
+    except ValueError:
+        return 1.0, s, s          # symbolic selectivity variable
+
+
+def _fmt_coeff(x):
+    """Scientific-style coefficient: integers via _fmt, else a short decimal."""
+    if abs(x - round(x)) < 1e-9:
+        return _fmt(int(round(x)))
+    return ("%.4f" % x).rstrip("0").rstrip(".")
+
+
+def _lin_expr(terms):
+    """
+    Render a linear form  {symbol -> coeff}  as  "const + a * Sym + ...".
+    The "" key is the constant term. Coefficients are scientific-style.
+    """
+    out = []
+    if "" in terms and abs(terms[""]) > 1e-9:
+        out.append(_fmt_coeff(terms[""]))
+    for sym in sorted(k for k in terms if k != ""):
+        c = terms[sym]
+        if abs(c) < 1e-9:
+            continue
+        cf = _fmt_coeff(c)
+        out.append(sym if cf == "1" else f"{cf} * {sym}")
+    return " + ".join(out) if out else "0"
+
+
+# ══════════════════════════════════════════════════════════════
+#  SYMBOLIC SIMPLIFIER  — collect a cost expression into short form
+# ══════════════════════════════════════════════════════════════
+#
+# Reduces a symbolic cost string such as
+#   (2 * 10^3 * t_d + 9 * 2 * 10^3 * t_s) + (9 * 2 * 10^3 * (t_s + t_d))
+#   + (3 * (2 * 10^4 + 10^5) * t_d)
+# into the collected scientific form
+#   (3.8 * 10^5) * t_d + (3.6 * 10^4) * t_s
+#
+# Cost expressions are linear in t_d and t_s; any other identifier (a symbolic
+# selectivity like Sp) is kept as a coefficient symbol. The grammar handled is:
+#   expr   := term (('+'|'-') term)*
+#   term   := factor ('*' factor)*
+#   factor := atom ('^' atom)?            (exponent must be a plain number)
+#   atom   := number | identifier | '(' expr ')'
+# Internally everything becomes a polynomial {sorted(symbol_tuple) -> coeff}.
+
+def _tokenize(s):
+    toks, i, n = [], 0, len(s)
+    while i < n:
+        c = s[i]
+        if c.isspace():
+            i += 1
+        elif c in "+-*^()":
+            toks.append(c); i += 1
+        elif c.isdigit() or c == ".":
+            j = i
+            while j < n and (s[j].isdigit() or s[j] == "."):
+                j += 1
+            toks.append(("num", float(s[i:j]))); i = j
+        elif c.isalpha() or c == "_":
+            j = i
+            while j < n and (s[j].isalnum() or s[j] == "_"):
+                j += 1
+            toks.append(("id", s[i:j])); i = j
+        else:
+            i += 1   # skip anything unexpected
+    return toks
+
+
+def _poly_add(a, b):
+    r = dict(a)
+    for k, v in b.items():
+        r[k] = r.get(k, 0.0) + v
+    return r
+
+
+def _poly_mul(a, b):
+    r = {}
+    for k1, v1 in a.items():
+        for k2, v2 in b.items():
+            k = tuple(sorted(k1 + k2))
+            r[k] = r.get(k, 0.0) + v1 * v2
+    return r
+
+
+class _ExprParser:
+    def __init__(self, toks):
+        self.toks, self.pos = toks, 0
+
+    def _peek(self):
+        return self.toks[self.pos] if self.pos < len(self.toks) else None
+
+    def _next(self):
+        t = self.toks[self.pos]; self.pos += 1; return t
+
+    def parse(self):
+        return self._expr()
+
+    def _expr(self):
+        node = self._term()
+        while self._peek() in ("+", "-"):
+            op = self._next()
+            rhs = self._term()
+            node = _poly_add(node, rhs if op == "+" else {k: -v for k, v in rhs.items()})
+        return node
+
+    def _term(self):
+        node = self._factor()
+        while self._peek() == "*":
+            self._next()
+            node = _poly_mul(node, self._factor())
+        return node
+
+    def _factor(self):
+        node = self._atom()
+        while self._peek() == "^":
+            self._next()
+            exp = self._atom()
+            k = int(round(exp.get((), 0.0)))
+            res = {(): 1.0}
+            for _ in range(k):
+                res = _poly_mul(res, node)
+            node = res
+        return node
+
+    def _atom(self):
+        t = self._peek()
+        if t == "(":
+            self._next()
+            node = self._expr()
+            if self._peek() == ")":
+                self._next()
+            return node
+        t = self._next()
+        if isinstance(t, tuple) and t[0] == "num":
+            return {(): t[1]}
+        if isinstance(t, tuple) and t[0] == "id":
+            return {(t[1],): 1.0}
+        return {(): 0.0}
+
+
+def _mono_to_str(mono, coeff):
+    """Format one monomial (symbols already excluding t_d/t_s) with a coeff."""
+    cf = _fmt_coeff(coeff)
+    if not mono:
+        return cf
+    syms = " * ".join(mono)
+    return syms if cf == "1" else f"{cf} * {syms}"
+
+
+def _coeff_poly_to_str(d):
+    """Render {symbol_tuple -> coeff} as 'const + a * Sym + ...' (scientific)."""
+    items = []
+    if () in d and abs(d[()]) > 1e-9:
+        items.append(((), d[()]))
+    for k in sorted((k for k in d if k != ()), key=lambda t: (len(t), t)):
+        if abs(d[k]) > 1e-9:
+            items.append((k, d[k]))
+    if not items:
+        return "0"
+    return " + ".join(_mono_to_str(m, c) for m, c in items)
+
+
+def simplify_cost_expr(expr_str):
+    """
+    Collect a symbolic cost expression into  (..) * t_d + (..) * t_s  with every
+    coefficient in scientific notation. Selectivity symbols (e.g. Sp) are kept.
+    Returns the simplified string (falls back to the original on parse failure).
+    """
+    try:
+        poly = _ExprParser(_tokenize(expr_str)).parse()
+    except Exception:
+        return expr_str
+
+    td, ts, other = {}, {}, {}
+    for mono, coeff in poly.items():
+        if abs(coeff) < 1e-9:
+            continue
+        has_td, has_ts = "t_d" in mono, "t_s" in mono
+        if has_td and not has_ts:
+            rest = tuple(s for s in mono if s != "t_d")
+            td[rest] = td.get(rest, 0.0) + coeff
+        elif has_ts and not has_td:
+            rest = tuple(s for s in mono if s != "t_s")
+            ts[rest] = ts.get(rest, 0.0) + coeff
+        else:
+            other[mono] = other.get(mono, 0.0) + coeff   # not a clean t_d/t_s term
+
+    parts = []
+    td_s = _coeff_poly_to_str(td)
+    ts_s = _coeff_poly_to_str(ts)
+    if td_s != "0":
+        parts.append(f"({td_s}) * t_d")
+    if ts_s != "0":
+        parts.append(f"({ts_s}) * t_s")
+    if other:
+        parts.append(_coeff_poly_to_str(other))
+    return " + ".join(parts) if parts else "0"
+
+
+def select_broadcast_join_cost(
+    blocks_a, blocks_b, num_processors,
+    name_a="A", name_b="B",
+    sel_a=None, sel_b=None,
+    join_field="",
+    project_cost=0,
+):
+    """
+    Cost of  π(...)( σ_a(A) ⋈ σ_b(B) )  via the select-then-broadcast algorithm.
+
+    The smaller table is broadcast (outer); the larger stays local (inner).
+    sel_a / sel_b are selectivity specs (see _sel_spec): numeric fraction,
+    symbolic variable name, or None for "no filter".
+
+    Output is symbolic and selectivity-aware — Elapsed and Total are returned
+    both as the per-step breakdown and as collected linear forms.
+    """
+    print(f"[TOOL] select_broadcast_join_cost({name_a}={blocks_a}, {name_b}={blocks_b}, "
+          f"p={num_processors}, sel_a={sel_a!r}, sel_b={sel_b!r}, join_field='{join_field}')")
+
+    p = num_processors
+
+    # Outer = smaller table (broadcast).  Inner = larger (local).
+    if blocks_a <= blocks_b:
+        B_out, name_out, sel_out = blocks_a, name_a, sel_a
+        B_in,  name_in,  sel_in  = blocks_b, name_b, sel_b
+    else:
+        B_out, name_out, sel_out = blocks_b, name_b, sel_b
+        B_in,  name_in,  sel_in  = blocks_a, name_a, sel_a
+
+    bs_out = math.ceil(B_out / p)
+    bs_in  = math.ceil(B_in  / p)
+
+    c_out, sym_out, disp_out = _sel_spec(sel_out)
+    c_in,  sym_in,  disp_in  = _sel_spec(sel_in)
+
+    bs_out_s = _fmt(bs_out)
+    bs_in_s  = _fmt(bs_in)
+    p_s      = _fmt(p)
+    pm1_s    = _fmt(p - 1)
+
+    def mul(*parts):
+        return " * ".join(x for x in parts if x not in ("", None))
+
+    # ── per-server elapsed-time display strings (factored, unreduced) ──
+    step1 = mul(bs_out_s, "t_d")
+    step2 = mul(pm1_s, disp_out, bs_out_s, "t_s")
+    step3 = mul(pm1_s, disp_out, bs_out_s, "t_s")
+    step4 = mul(p_s, disp_out, bs_out_s, "t_d")
+    step5 = mul(bs_in_s, "t_d")
+    step6 = mul(disp_in, bs_in_s, "t_d")
+    join_outer = mul(p_s, disp_out, bs_out_s)
+    join_inner = mul(disp_in, bs_in_s)
+    step7 = f"3 * ({join_outer} + {join_inner}) * t_d"
+    step8 = mul(_fmt(project_cost), "t_d") if project_cost else "0"
+
+    # ── collect Elapsed into linear forms over {const, symbols} ──────
+    td, ts = {}, {}
+    def add(d, coeff, sym):
+        d[sym] = d.get(sym, 0.0) + coeff
+
+    add(td, bs_out,                  "")        # step 1
+    add(ts, (p - 1) * c_out * bs_out, sym_out)  # step 2
+    add(ts, (p - 1) * c_out * bs_out, sym_out)  # step 3
+    add(td, p * c_out * bs_out,       sym_out)  # step 4
+    add(td, bs_in,                   "")        # step 5
+    add(td, c_in * bs_in,             sym_in)   # step 6
+    add(td, 3 * p * c_out * bs_out,   sym_out)  # step 7 (outer part)
+    add(td, 3 * c_in * bs_in,         sym_in)   # step 7 (inner part)
+    if project_cost:
+        add(td, project_cost,        "")        # step 8
+
+    td_expr = _lin_expr(td)
+    ts_expr = _lin_expr(ts)
+
+    if ts_expr and ts_expr != "0":
+        elapsed = f"({td_expr}) * t_d + ({ts_expr}) * t_s"
+    else:
+        elapsed = f"({td_expr}) * t_d"
+    total = f"{p_s} * ({elapsed})"
+
+    explanation = "\n".join([
+        f"Algorithm: select-then-broadcast join.",
+        f"  Broadcast the smaller table ({name_out}) after filtering; "
+        f"each server joins it locally with its partition of {name_in}.",
+        f"  {name_out}: {_fmt(B_out)} blocks -> {bs_out_s} blocks/server  (outer, broadcast)"
+        + (f", selectivity {disp_out}" if disp_out else ", no filter"),
+        f"  {name_in}: {_fmt(B_in)} blocks -> {bs_in_s} blocks/server  (inner, local)"
+        + (f", selectivity {disp_in}" if disp_in else ", no filter"),
+        f"  p = {p_s} servers",
+        "",
+        "Per-server steps (elapsed):",
+        f"  1) read + select {name_out}:           {step1}",
+        f"  2) send filtered {name_out} to (p-1):  {step2}",
+        f"  3) receive from (p-1):                {step3}",
+        f"  4) write full broadcast {name_out}:    {step4}",
+        f"  5) read + select {name_in}:            {step5}",
+        f"  6) write filtered {name_in}:           {step6}",
+        f"  7) natural join:                      {step7}",
+        f"  8) projection:                        {step8}",
+        "",
+        f"  Elapsed = {elapsed}",
+        f"  Total   = {p_s} * Elapsed = {total}",
+    ])
+
+    return {
+        "operation":      "select_broadcast_join",
+        "outer_table":    name_out,
+        "inner_table":    name_in,
+        "blocks_out":     B_out,
+        "blocks_in":      B_in,
+        "bs_out":         bs_out,
+        "bs_in":          bs_in,
+        "num_processors": p,
+        "selectivity_out": disp_out or "1",
+        "selectivity_in":  disp_in or "1",
+        "steps": {
+            "step1_read_select_outer":  step1,
+            "step2_send_outer":         step2,
+            "step3_receive_outer":      step3,
+            "step4_write_broadcast":    step4,
+            "step5_read_select_inner":  step5,
+            "step6_write_inner":        step6,
+            "step7_join":               step7,
+            "step8_projection":         step8,
+        },
+        "elapsed":        elapsed,
+        "total":          total,
+        "explanation":    explanation,
+    }
+
+
+# ══════════════════════════════════════════════════════════════
+#  RANGE-PARTITIONED BROADCAST JOIN
+# ══════════════════════════════════════════════════════════════
+#
+# Special case of the select-then-broadcast join: the INNER (larger) table is
+# RANGE-partitioned on exactly the field its predicate filters. The partitioning
+# already performs the selection — the matching tuples sit on a contiguous block
+# of  k  "active" servers, and EVERY tuple there matches (no extra Select, no
+# selectivity factor on the inner table).
+#
+# The OUTER (smaller) table is round-robin: it is read + filtered (selectivity
+# s_out) on all p servers and broadcast to the k active servers, which then join
+# locally and project.
+#
+# Per-server steps:
+#   1) all p   read + select outer            : bs_out                       * t_d
+#   2) send filtered outer to the k actives:
+#        - the (p-k) non-active servers send to k:   k     * s_out * bs_out   * t_s
+#        - the  k    active servers send to (k-1):  (k-1)  * s_out * bs_out   * t_s
+#   3) k actives receive from (p-1) others    : (p-1) * s_out * bs_out        * t_s
+#   4) k actives write full broadcast outer   :  p    * s_out * bs_out        * t_d
+#   5) k actives natural join                 : 3 * (p*s_out*bs_out + bs_in)  * t_d
+#   6) projection                             : 0
+#
+# Elapsed (bottleneck = an active server) uses the clean (p-1) communication
+# bound for BOTH the send and the receive phase:
+#   E_td = bs_out + p*s_out*bs_out + 3*(p*s_out*bs_out + bs_in)
+#   E_ts = 2 * (p-1) * s_out * bs_out
+#
+# Total is NOT p * Elapsed (only k servers do steps 3-5) — it is the sum of the
+# real per-server work:
+#   T_td = p*bs_out  +  k*p*s_out*bs_out  +  3k*(p*s_out*bs_out + bs_in)
+#   T_ts = 2 * k * (p-1) * s_out * bs_out
+#         (send total = [(p-k)*k + k*(k-1)] = k*(p-1);  receive total = k*(p-1))
+
+
+def range_broadcast_join_cost(
+    blocks_outer, blocks_inner, num_processors, active_processors,
+    name_outer="A", name_inner="B",
+    sel_outer=None, join_field="",
+    project_cost=0,
+):
+    """
+    Cost when the INNER (larger) table is range-partitioned on its filter field,
+    so its selection is free and localised to `active_processors` (k) servers.
+
+    blocks_outer:      block count of the smaller (broadcast) table.
+    blocks_inner:      block count of the larger (range-partitioned, local) table.
+    num_processors:    total servers p.
+    active_processors: k = servers holding the matching range (= round(sel * p)).
+    sel_outer:         selectivity spec for the outer table's pre-join Select
+                       (numeric fraction, symbolic name like "Sp", or None).
+    """
+    print(f"[TOOL] range_broadcast_join_cost(outer {name_outer}={blocks_outer}, "
+          f"inner {name_inner}={blocks_inner}, p={num_processors}, k={active_processors}, "
+          f"sel_outer={sel_outer!r}, join_field='{join_field}')")
+
+    p = num_processors
+    k = active_processors
+    bs_out = math.ceil(blocks_outer / p)     # outer is round-robin across all p
+    bs_in  = math.ceil(blocks_inner / p)     # inner range-partitioned: 1/p per server
+
+    c_out, sym_out, disp_out = _sel_spec(sel_outer)
+
+    bs_out_s = _fmt(bs_out)
+    bs_in_s  = _fmt(bs_in)
+    p_s      = _fmt(p)
+    k_s      = _fmt(k)
+    pm1_s    = _fmt(p - 1)
+    km1_s    = _fmt(k - 1)
+
+    def mul(*parts):
+        return " * ".join(x for x in parts if x not in ("", None))
+
+    # ── per-server elapsed-time display strings ──────────────────────
+    step1   = mul(bs_out_s, "t_d")
+    step2a  = mul(k_s,   disp_out, bs_out_s, "t_s")     # non-active -> k actives
+    step2b  = mul(km1_s, disp_out, bs_out_s, "t_s")     # active -> (k-1) actives
+    step3   = mul(pm1_s, disp_out, bs_out_s, "t_s")     # actives receive from (p-1)
+    step4   = mul(p_s,   disp_out, bs_out_s, "t_d")     # write full broadcast
+    join_outer = mul(p_s, disp_out, bs_out_s)
+    step5   = f"3 * ({join_outer} + {bs_in_s}) * t_d"
+    step6   = mul(_fmt(project_cost), "t_d") if project_cost else "0"
+
+    # ── Elapsed (bottleneck active server; (p-1) comm bound) ─────────
+    e_td, e_ts = {}, {}
+    def eadd(d, c, s):
+        d[s] = d.get(s, 0.0) + c
+    eadd(e_td, bs_out,                  "")        # step 1
+    eadd(e_td, p * c_out * bs_out,       sym_out)  # step 4
+    eadd(e_td, 3 * p * c_out * bs_out,   sym_out)  # step 5 outer part
+    eadd(e_td, 3 * bs_in,               "")        # step 5 inner part
+    eadd(e_ts, 2 * (p - 1) * c_out * bs_out, sym_out)   # send + receive (9+9)
+    if project_cost:
+        eadd(e_td, project_cost,        "")
+
+    e_td_expr = _lin_expr(e_td)
+    e_ts_expr = _lin_expr(e_ts)
+    if e_ts_expr and e_ts_expr != "0":
+        elapsed = f"({e_td_expr}) * t_d + ({e_ts_expr}) * t_s"
+    else:
+        elapsed = f"({e_td_expr}) * t_d"
+
+    # ── Total (sum of real per-server work — NOT p * Elapsed) ────────
+    t_td, t_ts = {}, {}
+    def tadd(d, c, s):
+        d[s] = d.get(s, 0.0) + c
+    tadd(t_td, p * bs_out,                  "")        # step1, all p
+    tadd(t_td, k * p * c_out * bs_out,       sym_out)  # step4, k actives
+    tadd(t_td, 3 * k * p * c_out * bs_out,   sym_out)  # step5 outer, k actives
+    tadd(t_td, 3 * k * bs_in,               "")        # step5 inner, k actives
+    tadd(t_ts, 2 * k * (p - 1) * c_out * bs_out, sym_out)  # send k*(p-1) + recv k*(p-1)
+    if project_cost:
+        tadd(t_td, k * project_cost,        "")
+
+    t_td_expr = _lin_expr(t_td)
+    t_ts_expr = _lin_expr(t_ts)
+    if t_ts_expr and t_ts_expr != "0":
+        total = f"({t_td_expr}) * t_d + ({t_ts_expr}) * t_s"
+    else:
+        total = f"({t_td_expr}) * t_d"
+
+    explanation = "\n".join([
+        f"Algorithm: range-partitioned broadcast join.",
+        f"  {name_inner} is range-partitioned on the filter field -> the matching tuples"
+        f" sit on k = {k_s} active servers, and ALL tuples there match (no Select on {name_inner}).",
+        f"  {name_outer} (round-robin) is filtered and broadcast to those k servers.",
+        f"  {name_outer}: {_fmt(blocks_outer)} blocks -> {bs_out_s} blocks/server  (outer, broadcast)"
+        + (f", selectivity {disp_out}" if disp_out else ", no filter"),
+        f"  {name_inner}: {_fmt(blocks_inner)} blocks -> {bs_in_s} blocks/server  (inner, range-partitioned)",
+        f"  p = {p_s} servers, k = {k_s} active",
+        "",
+        "Per-server steps (elapsed):",
+        f"  1) all p read + select {name_outer}:        {step1}",
+        f"  2) send filtered {name_outer}:",
+        f"       - (p-k) non-active servers -> k:     {step2a}",
+        f"       - k active servers -> (k-1):         {step2b}",
+        f"  3) k active receive from (p-1):           {step3}",
+        f"  4) k active write full broadcast:         {step4}",
+        f"  5) k active natural join:                 {step5}",
+        f"  6) projection:                            {step6}",
+        "",
+        f"  Elapsed (bottleneck active server) = {elapsed}",
+        f"  Total (sum of all servers, NOT p*Elapsed) = {total}",
+    ])
+
+    return {
+        "operation":          "range_broadcast_join",
+        "outer_table":        name_outer,
+        "inner_table":        name_inner,
+        "blocks_outer":       blocks_outer,
+        "blocks_inner":       blocks_inner,
+        "bs_out":             bs_out,
+        "bs_in":              bs_in,
+        "num_processors":     p,
+        "active_processors":  k,
+        "selectivity_outer":  disp_out or "1",
+        "steps": {
+            "step1_read_select_outer":   step1,
+            "step2a_send_nonactive":     step2a,
+            "step2b_send_active":        step2b,
+            "step3_receive":             step3,
+            "step4_write_broadcast":     step4,
+            "step5_join":                step5,
+            "step6_projection":          step6,
+        },
+        "elapsed":            elapsed,
+        "total":              total,
+        "explanation":        explanation,
+    }
+
+
+# ══════════════════════════════════════════════════════════════
+#  HASH-SHUFFLE (REDISTRIBUTION) JOIN
+# ══════════════════════════════════════════════════════════════
+#
+# Used when one table is already HASH-partitioned on the join field and the other
+# is not. The non-hashed table is RE-HASHED (redistributed) on the join field so
+# that every row with the same key lands on the same server as the matching rows
+# of the already-hashed table — then each server joins locally. No broadcast.
+#
+# Let R = redistributed table (read + filtered, then shuffled), S = already-hashed
+# local table (read + filtered in place). bs_r = B_R/p, bs_s = B_S/p.
+# Shuffle keeps 1/p of each server's data local and sends (p-1)/p away.
+#
+# Per-server steps:
+#   1) read + select R                 : bs_r                          * t_d
+#   2) send (p-1)/p of filtered R       : (p-1)/p * s_r * bs_r          * t_s
+#   3) receive (p-1)/p from others     : (p-1)/p * s_r * bs_r          * t_s
+#   4) write own hash bucket of R       : s_r * bs_r                    * t_d
+#        (= total filtered R / p — the data received plus the 1/p kept local)
+#   5) read + select S                 : bs_s                          * t_d
+#   6) write filtered S                : s_s * bs_s                    * t_d
+#   7) natural join (local)            : 3 * (s_r*bs_r + s_s*bs_s)      * t_d
+#   8) projection                      : 0
+#
+#   Elapsed = Σ(td) * t_d + Σ(ts) * t_s
+#   Total   = p * Elapsed   (every server does identical work — symmetric shuffle)
+
+
+def hash_shuffle_join_cost(
+    blocks_redistributed, blocks_local, num_processors,
+    name_redistributed="R", name_local="S",
+    sel_redistributed=None, sel_local=None,
+    join_field="",
+    project_cost=0,
+):
+    """
+    Cost of a Join where the LOCAL table is already hash-partitioned on the join
+    field and the OTHER table is re-hashed (redistributed) on that field so the
+    join becomes purely local. No broadcast.
+
+    blocks_redistributed: block count of the table that must be re-hashed (R).
+    blocks_local:         block count of the already-hash-partitioned table (S).
+    num_processors:       servers p.
+    sel_redistributed:    selectivity spec for R's pre-join filter (numeric, symbol, or None).
+    sel_local:            selectivity spec for S's pre-join filter.
+    join_field:           the hash/join field.
+    """
+    print(f"[TOOL] hash_shuffle_join_cost(redistributed {name_redistributed}={blocks_redistributed}, "
+          f"local {name_local}={blocks_local}, p={num_processors}, sel_r={sel_redistributed!r}, "
+          f"sel_s={sel_local!r}, join_field='{join_field}')")
+
+    p = num_processors
+    bs_r = math.ceil(blocks_redistributed / p)
+    bs_s = math.ceil(blocks_local / p)
+
+    c_r, sym_r, disp_r = _sel_spec(sel_redistributed)
+    c_s, sym_s, disp_s = _sel_spec(sel_local)
+
+    bs_r_s = _fmt(bs_r)
+    bs_s_s = _fmt(bs_s)
+    p_s    = _fmt(p)
+
+    frac_disp = _frac_disp(p - 1, p)     # (p-1)/p, e.g. "0.9"
+    frac_val  = (p - 1) / p
+
+    def mul(*parts):
+        return " * ".join(x for x in parts if x not in ("", None))
+
+    # ── per-server elapsed-time display strings ──────────────────────
+    step1 = mul(bs_r_s, "t_d")
+    step2 = mul(frac_disp, disp_r, bs_r_s, "t_s")     # shuffle out
+    step3 = mul(frac_disp, disp_r, bs_r_s, "t_s")     # shuffle in
+    step4 = mul(disp_r, bs_r_s, "t_d")                # write own bucket = s_r*bs_r
+    step5 = mul(bs_s_s, "t_d")
+    step6 = mul(disp_s, bs_s_s, "t_d")
+    join_r = mul(disp_r, bs_r_s)
+    join_s = mul(disp_s, bs_s_s)
+    step7 = f"3 * ({join_r} + {join_s}) * t_d"
+    step8 = mul(_fmt(project_cost), "t_d") if project_cost else "0"
+
+    # ── Elapsed (collected linear form over {const, selectivity symbols}) ──
+    e_td, e_ts = {}, {}
+    def add(d, c, s):
+        d[s] = d.get(s, 0.0) + c
+    add(e_td, bs_r,            "")        # step 1
+    add(e_td, c_r * bs_r,      sym_r)     # step 4
+    add(e_td, bs_s,            "")        # step 5
+    add(e_td, c_s * bs_s,      sym_s)     # step 6
+    add(e_td, 3 * c_r * bs_r,  sym_r)     # step 7 (R part)
+    add(e_td, 3 * c_s * bs_s,  sym_s)     # step 7 (S part)
+    add(e_ts, 2 * frac_val * c_r * bs_r, sym_r)   # steps 2+3
+    if project_cost:
+        add(e_td, project_cost, "")
+
+    e_td_expr = _lin_expr(e_td)
+    e_ts_expr = _lin_expr(e_ts)
+    if e_ts_expr and e_ts_expr != "0":
+        elapsed = f"({e_td_expr}) * t_d + ({e_ts_expr}) * t_s"
+    else:
+        elapsed = f"({e_td_expr}) * t_d"
+
+    # ── Total = p * Elapsed (symmetric: every server does the same work) ──
+    t_td = {k: v * p for k, v in e_td.items()}
+    t_ts = {k: v * p for k, v in e_ts.items()}
+    t_td_expr = _lin_expr(t_td)
+    t_ts_expr = _lin_expr(t_ts)
+    if t_ts_expr and t_ts_expr != "0":
+        total = f"({t_td_expr}) * t_d + ({t_ts_expr}) * t_s"
+    else:
+        total = f"({t_td_expr}) * t_d"
+
+    jf = join_field or "the join field"
+    idea = (
+        f"{name_local} is hash({jf})-partitioned, so we re-hash (redistribute) "
+        f"{name_redistributed} on hash({jf}) too: every row with the same {jf} ends up "
+        f"on the same server, and each server joins its local data — no broadcast needed. "
+        f"Each server keeps 1/p of its filtered {name_redistributed} and ships (p-1)/p away."
+    )
+
+    explanation = "\n".join([
+        f"Algorithm: hash-shuffle (redistribution) join.",
+        f"  Idea: {idea}",
+        f"  {name_redistributed} (re-hashed): {_fmt(blocks_redistributed)} blocks -> {bs_r_s} blocks/server"
+        + (f", selectivity {disp_r}" if disp_r else ", no filter"),
+        f"  {name_local} (already hashed): {_fmt(blocks_local)} blocks -> {bs_s_s} blocks/server"
+        + (f", selectivity {disp_s}" if disp_s else ", no filter"),
+        f"  p = {p_s} servers, shuffle fraction (p-1)/p = {frac_disp}",
+        "",
+        "Per-server steps (elapsed):",
+        f"  1) read + select {name_redistributed}:        {step1}",
+        f"  2) send (p-1)/p of filtered {name_redistributed}: {step2}",
+        f"  3) receive (p-1)/p from others:        {step3}",
+        f"  4) write own hash bucket:              {step4}",
+        f"  5) read + select {name_local}:             {step5}",
+        f"  6) write filtered {name_local}:            {step6}",
+        f"  7) natural join (local):               {step7}",
+        f"  8) projection:                         {step8}",
+        "",
+        f"  Elapsed = {elapsed}",
+        f"  Total   = {p_s} * Elapsed = {total}",
+    ])
+
+    return {
+        "operation":          "hash_shuffle_join",
+        "idea":               idea,
+        "redistributed_table": name_redistributed,
+        "local_table":        name_local,
+        "blocks_redistributed": blocks_redistributed,
+        "blocks_local":       blocks_local,
+        "bs_r":               bs_r,
+        "bs_s":               bs_s,
+        "num_processors":     p,
+        "shuffle_fraction":   frac_disp,
+        "selectivity_r":      disp_r or "1",
+        "selectivity_s":      disp_s or "1",
+        "steps": {
+            "step1_read_select_r":  step1,
+            "step2_shuffle_send":   step2,
+            "step3_shuffle_recv":   step3,
+            "step4_write_bucket":   step4,
+            "step5_read_select_s":  step5,
+            "step6_write_s":        step6,
+            "step7_join":           step7,
+            "step8_projection":     step8,
+        },
+        "elapsed":            elapsed,
+        "total":              total,
+        "explanation":        explanation,
+    }
+
+
+# ══════════════════════════════════════════════════════════════
+#  SELECTIVE-FILTER BROADCAST JOIN
+# ══════════════════════════════════════════════════════════════
+#
+# Used when a highly selective filter (e.g. a point predicate pid=650 plus a
+# narrow range) shrinks one table to a TINY result of `result_blocks` blocks.
+# That tiny result is read+filtered locally on every server, broadcast, and
+# joined with the OTHER table read locally. The other table is usually NOT
+# filtered (joined directly inside the join), so there are no separate
+# read/select/write steps for it.
+#
+#   result_total   = max(1, result_blocks)             (gathered filtered size)
+#   result_per_srv = max(1, ceil(result_total / p))    (each server's share to ship)
+#
+# Per-server steps (other table unfiltered):
+#   1) read + select filtered table   : bs_filt                       * t_d
+#   2) send result to (p-1) others     : (p-1) * result_per_srv         * t_s
+#   3) receive from (p-1)             : (p-1) * result_per_srv         * t_s
+#   4) write gathered result          : result_total                  * t_d
+#   5) natural join (local)           : 3 * (result_total + bs_other)  * t_d
+#   6) projection                     : 0
+#
+# If the other table IS filtered (sel_other given), two extra steps appear
+# (read+select other, write filtered other) and the join uses sel_other*bs_other.
+#
+#   Elapsed = Σ(td) * t_d + Σ(ts) * t_s ;  Total = p * Elapsed (symmetric).
+#
+# How to get result_blocks: result_blocks = max(1, ceil(s * B_filtered)), where
+# s is the combined selectivity of the filter. For an AND of independent uniform
+# predicates, multiply their selectivities, e.g. pid=650 (1/1000) AND
+# quantity>=91 (10/100) -> s = 1/10000.
+
+
+def selective_broadcast_join_cost(
+    blocks_filtered_table, blocks_other_table, num_processors, result_blocks,
+    name_filtered="A", name_other="B",
+    sel_other=None, join_field="",
+    project_cost=0,
+):
+    """
+    Join where a highly selective filter shrinks one table to `result_blocks`
+    blocks, which is then broadcast and joined with the other (local) table.
+
+    blocks_filtered_table: blocks of the table being filtered + broadcast.
+    blocks_other_table:    blocks of the table joined locally (usually unfiltered).
+    num_processors:        servers p.
+    result_blocks:         block count of the filtered result (= max(1, ceil(s*B))).
+    sel_other:             selectivity spec of the other table's filter, or None.
+    """
+    print(f"[TOOL] selective_broadcast_join_cost(filtered {name_filtered}={blocks_filtered_table}, "
+          f"other {name_other}={blocks_other_table}, p={num_processors}, result_blocks={result_blocks}, "
+          f"sel_other={sel_other!r}, join_field='{join_field}')")
+
+    p = num_processors
+    bs_filt  = math.ceil(blocks_filtered_table / p)
+    bs_other = math.ceil(blocks_other_table / p)
+    result_total   = max(1, int(result_blocks))
+    result_per_srv = max(1, math.ceil(result_total / p))
+
+    c_o, sym_o, disp_o = _sel_spec(sel_other)
+
+    p_s        = _fmt(p)
+    pm1_s      = _fmt(p - 1)
+    bs_filt_s  = _fmt(bs_filt)
+    bs_other_s = _fmt(bs_other)
+    res_s      = _fmt(result_total)
+    rpp_disp   = "" if result_per_srv == 1 else _fmt(result_per_srv)   # omit the "* 1"
+
+    def mul(*parts):
+        return " * ".join(x for x in parts if x not in ("", None))
+
+    inner_filtered = sym_o or disp_o   # the other table has a real filter
+
+    # ── per-server step display + elapsed accumulation ──────────────
+    e_td, e_ts = {}, {}
+    def add(d, c, s):
+        d[s] = d.get(s, 0.0) + c
+
+    steps = []
+    steps.append((f"read + select {name_filtered}", mul(bs_filt_s, "t_d")))
+    add(e_td, bs_filt, "")
+
+    steps.append((f"send result to (p-1)", mul(pm1_s, rpp_disp, "t_s")))
+    add(e_ts, (p - 1) * result_per_srv, "")
+
+    steps.append(("receive from (p-1)", mul(pm1_s, rpp_disp, "t_s")))
+    add(e_ts, (p - 1) * result_per_srv, "")
+
+    steps.append((f"write gathered result", mul(res_s, "t_d")))
+    add(e_td, result_total, "")
+
+    if inner_filtered:
+        steps.append((f"read + select {name_other}", mul(bs_other_s, "t_d")))
+        add(e_td, bs_other, "")
+        steps.append((f"write filtered {name_other}", mul(disp_o, bs_other_s, "t_d")))
+        add(e_td, c_o * bs_other, sym_o)
+        join_inner = mul(disp_o, bs_other_s)
+        add(e_td, 3 * c_o * bs_other, sym_o)
+    else:
+        join_inner = bs_other_s
+        add(e_td, 3 * bs_other, "")
+
+    steps.append(("natural join (local)", f"3 * ({res_s} + {join_inner}) * t_d"))
+    add(e_td, 3 * result_total, "")
+
+    proj = mul(_fmt(project_cost), "t_d") if project_cost else "0"
+    steps.append(("projection", proj))
+    if project_cost:
+        add(e_td, project_cost, "")
+
+    e_td_expr = _lin_expr(e_td)
+    e_ts_expr = _lin_expr(e_ts)
+    if e_ts_expr and e_ts_expr != "0":
+        elapsed = f"({e_td_expr}) * t_d + ({e_ts_expr}) * t_s"
+    else:
+        elapsed = f"({e_td_expr}) * t_d"
+
+    t_td = {k: v * p for k, v in e_td.items()}
+    t_ts = {k: v * p for k, v in e_ts.items()}
+    t_td_expr = _lin_expr(t_td)
+    t_ts_expr = _lin_expr(t_ts)
+    if t_ts_expr and t_ts_expr != "0":
+        total = f"({t_td_expr}) * t_d + ({t_ts_expr}) * t_s"
+    else:
+        total = f"({t_td_expr}) * t_d"
+
+    jf = join_field or "the join field"
+    idea = (
+        f"The filter on {name_filtered} is highly selective, so the filtered result is "
+        f"tiny ({res_s} block(s)). Each server reads and filters its {name_filtered} "
+        f"partition, broadcasts the small result, and joins it locally with {name_other} "
+        f"on {jf}. Broadcasting the tiny result is far cheaper than moving {name_other}."
+    )
+
+    step_lines = [f"  {i+1}) {label}:".ljust(38) + f" {cost}"
+                  for i, (label, cost) in enumerate(steps)]
+
+    explanation = "\n".join([
+        f"Algorithm: selective-filter broadcast join.",
+        f"  Idea: {idea}",
+        f"  {name_filtered}: {_fmt(blocks_filtered_table)} blocks -> {bs_filt_s} blocks/server"
+        f"  (filtered to {res_s} block(s) total, {rpp_disp or '1'} per server)",
+        f"  {name_other}: {_fmt(blocks_other_table)} blocks -> {bs_other_s} blocks/server"
+        + ("" if not inner_filtered else f", selectivity {disp_o}"),
+        f"  p = {p_s} servers",
+        "",
+        "Per-server steps (elapsed):",
+        *step_lines,
+        "",
+        f"  Elapsed = {elapsed}",
+        f"  Total   = {p_s} * Elapsed = {total}",
+    ])
+
+    return {
+        "operation":         "selective_broadcast_join",
+        "idea":              idea,
+        "filtered_table":    name_filtered,
+        "other_table":       name_other,
+        "blocks_filtered":   blocks_filtered_table,
+        "blocks_other":      blocks_other_table,
+        "bs_filtered":       bs_filt,
+        "bs_other":          bs_other,
+        "result_blocks":     result_total,
+        "result_per_server": result_per_srv,
+        "num_processors":    p,
+        "steps":             {f"step{i+1}_{label.split()[0].lower()}": cost
+                              for i, (label, cost) in enumerate(steps)},
+        "elapsed":           elapsed,
+        "total":             total,
+        "explanation":       explanation,
+    }
+
+
+# ══════════════════════════════════════════════════════════════
+#  CONDITION ANALYSIS  — derive the optimization / core idea
+# ══════════════════════════════════════════════════════════════
+#
+# Reads the structured facts of a two-table join (each table's distribution,
+# predicate field/type/selectivity, the join field, p) and DERIVES the data-
+# movement optimization, the recommended cost tool, and a plain-language core
+# idea — the reasoning a human writes before computing, e.g.
+#   "orders.quantity is range-partitioned and the predicate is on quantity, so
+#    matching rows sit on servers 6-10 and every row there already qualifies —
+#    no second select needed."
+
+
+def _analyze_table(t, p, join_field):
+    """Pull out the derived facts for one table dict."""
+    name   = t.get("name", "?")
+    blocks = t.get("blocks")
+    dist   = t.get("distribution", "round_robin")
+    method, dfield = _dist_info(dist)
+    ff     = (t.get("filter_field") or "").strip()
+    ftype  = (t.get("filter_type") or "none").strip().lower()
+    sel    = t.get("selectivity")
+    c, sym, disp = _sel_spec(sel if sel not in (None, "") else None)
+    sel_numeric = (sym == "" and sel not in (None, ""))
+    bs = math.ceil(blocks / p) if blocks else None
+    result_blocks = max(1, math.ceil(c * blocks)) if (sel_numeric and blocks) else None
+
+    on_filter_field = bool(dfield and ff and dfield.lower() == ff.lower())
+    on_join_field   = bool(dfield and join_field and dfield.lower() == join_field.lower())
+
+    facts, active_k = [], None
+    if method == "range" and on_filter_field and ftype in ("range", "point"):
+        facts.append(
+            f"{name} is range-partitioned on '{ff}', the field its predicate filters -> "
+            f"matching rows are co-located on a contiguous subset of servers (partition pruning)."
+        )
+        if sel_numeric:
+            active_k = max(1, round(c * p))
+            facts.append(
+                f"{name}: the predicate keeps fraction {disp} of a uniform range -> exactly "
+                f"k = round({disp} * {p}) = {active_k} of {p} servers hold all matches, and EVERY "
+                f"row on those servers already satisfies the predicate -> NO second select on {name}."
+            )
+    elif method == "hash" and on_filter_field and ftype == "point":
+        facts.append(
+            f"{name} is hash({ff})-partitioned and the predicate is a point match on '{ff}' -> "
+            f"exactly 1 server holds the matching rows."
+        )
+
+    if method == "hash" and on_join_field:
+        facts.append(f"{name} is already hash({join_field})-partitioned on the join field.")
+
+    if ftype == "point" and result_blocks is not None and result_blocks <= max(1, p):
+        facts.append(
+            f"{name}'s filter is highly selective -> its result is only ~{_fmt(result_blocks)} "
+            f"block(s), cheap to broadcast."
+        )
+
+    t2 = dict(t)
+    t2.update(name=name, blocks=blocks, method=method, dfield=dfield, ff=ff, ftype=ftype,
+              sel=sel, c=c, sym=sym, disp=disp, sel_numeric=sel_numeric, bs=bs,
+              result_blocks=result_blocks, on_filter_field=on_filter_field,
+              on_join_field=on_join_field, facts=facts, active_k=active_k)
+    return t2
+
+
+def analyze_join_conditions(spec_json):
+    """
+    Analyse the conditions of a two-table join and recommend the data-movement
+    optimization. See the @tool wrapper for the input schema.
+    """
+    print(f"[TOOL] analyze_join_conditions(spec='{spec_json[:80]}...')")
+    spec = json.loads(spec_json)
+    p  = spec.get("num_processors", 1)
+    jf = (spec.get("join_field") or "").strip()
+    tables = spec.get("tables", [])
+    if len(tables) != 2:
+        return {"error": "analyze_join_conditions expects exactly 2 tables in 'tables'."}
+
+    a = _analyze_table(tables[0], p, jf)
+    b = _analyze_table(tables[1], p, jf)
+    facts = a["facts"] + b["facts"]
+
+    def jhash(t):   return t["method"] == "hash" and t["on_join_field"]
+    def pruned(t):  return t["method"] == "range" and t["on_filter_field"] and t["ftype"] in ("range", "point")
+    def filtered(t): return t["ftype"] in ("point", "range", "scan") or t["sel"] not in (None, "")
+
+    rec, core, extra = None, None, {}
+
+    if jhash(a) and jhash(b):
+        rec  = "join_cost"   # parallel_join_cost detects the co-located/local case
+        core = (f"Both {a['name']} and {b['name']} are hash({jf})-partitioned on the join field, "
+                f"so matching rows already sit on the same server -> each server joins locally, "
+                f"no communication.")
+    elif jhash(a) or jhash(b):
+        local  = a if jhash(a) else b
+        redist = b if jhash(a) else a
+        rec  = "hash_shuffle_join_cost"
+        core = (f"{local['name']} is hash({jf})-partitioned, so re-hash {redist['name']} on {jf} "
+                f"too -> matching rows co-locate and each server joins locally, no broadcast.")
+        extra = {"local_table": local["name"], "redistributed_table": redist["name"]}
+    elif pruned(a) or pruned(b):
+        pr    = a if pruned(a) else b
+        other = b if pruned(a) else a
+        rec  = "range_broadcast_join_cost"
+        k    = pr.get("active_k")
+        core = (f"{pr['name']} is range-partitioned on its filter field, so its matching rows sit "
+                f"on {('k = ' + str(k)) if k else 'a subset of'} servers and need no second select; "
+                f"broadcast the smaller (filtered) {other['name']} to those servers and join locally.")
+        extra = {"range_table": pr["name"], "broadcast_table": other["name"], "active_processors": k}
+    else:
+        # Round-robin: broadcast the SMALLER (after filtering) table, keep the other local.
+        sized = sorted(
+            ((t["result_blocks"] if t["result_blocks"] is not None else t["blocks"]), t)
+            for t in (a, b)
+        )
+        smaller, larger = sized[0][1], sized[1][1]
+        tiny_note = ""
+        if smaller["result_blocks"] is not None and smaller["result_blocks"] <= max(1, p):
+            tiny_note = (f" Its filter is so selective the result is only "
+                         f"~{_fmt(smaller['result_blocks'])} block(s), very cheap to broadcast.")
+        if not filtered(larger):
+            # leaner plan: the local table is unfiltered -> no separate read/select/write for it
+            rec  = "selective_broadcast_join_cost"
+            core = (f"Broadcast the smaller filtered {smaller['name']} and join it locally with the "
+                    f"unfiltered {larger['name']} (read directly inside the join, no extra "
+                    f"select/write steps).{tiny_note}")
+            extra = {"filtered_table": smaller["name"], "other_table": larger["name"],
+                     "result_blocks": smaller["result_blocks"]}
+        else:
+            rec  = "select_broadcast_join_cost"
+            core = (f"All tables are round-robin (no locality to exploit), so broadcast the smaller "
+                    f"filtered {smaller['name']} to every server and join locally with the filtered "
+                    f"{larger['name']}.{tiny_note}")
+            extra = {"broadcast_table": smaller["name"], "local_table": larger["name"]}
+
+    if not facts:
+        facts.append("No special partitioning/selectivity shortcut applies; use the general broadcast plan.")
+
+    return {
+        "facts":                 facts,
+        "recommended_algorithm": rec,
+        "core_idea":             core,
+        **extra,
+    }
 
 
 def apply_selectivity(blocks, selectivity_fraction):
@@ -723,7 +1828,7 @@ def apply_selectivity(blocks, selectivity_fraction):
         "selectivity":      selectivity_fraction,
         "result_blocks":    result,
         "explanation": (
-            f"After Select filter: ceil({blocks} × {selectivity_fraction}) = {result} blocks"
+            f"After Select filter: ceil({_fmt(blocks)} × {selectivity_fraction}) = {_fmt(result)} blocks"
         ),
     }
 
@@ -747,6 +1852,8 @@ def compose_costs(steps):
 
     elapsed = " + ".join(f"({e})" for e in elapsed_parts)
     total   = " + ".join(f"({t})" for t in total_parts)
+    elapsed_collected = simplify_cost_expr(elapsed)
+    total_collected   = simplify_cost_expr(total)
 
     lines = [
         f"Step {i+1} [{s.get('operation', s.get('algorithm', '?'))}]: "
@@ -755,7 +1862,12 @@ def compose_costs(steps):
     ]
 
     return {
-        "elapsed":     elapsed,
-        "total":       total,
-        "explanation": "\n".join(lines) + f"\n\nCombined:\n  Elapsed = {elapsed}\n  Total   = {total}",
+        "elapsed":           elapsed,
+        "total":             total,
+        "elapsed_collected": elapsed_collected,
+        "total_collected":   total_collected,
+        "explanation": "\n".join(lines) + (
+            f"\n\nCombined:\n  Elapsed = {elapsed}\n          = {elapsed_collected}   (collected)"
+            f"\n  Total   = {total}\n          = {total_collected}   (collected)"
+        ),
     }
