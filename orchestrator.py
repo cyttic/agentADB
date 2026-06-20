@@ -27,6 +27,8 @@ from agents.apriori_tid_agent      import build_agent as build_apriori_tid_agent
 from agents.association_rules_agent import build_agent as build_assoc_rules_agent
 from agents.maximal_itemsets_agent  import build_agent as build_maximal_agent
 from agents.closed_itemsets_agent   import build_agent as build_closed_agent
+from agents.pagerank_agent         import build_agent as build_pagerank_agent
+from agents.tfidf_agent            import build_agent as build_tfidf_agent
 from agents.ra_proposal_agent     import generate_ra_proposals
 from llm_factory                  import build_llm, LLMConfig
 
@@ -41,7 +43,7 @@ from llm_factory                  import build_llm, LLMConfig
 
 ROUTER_PROMPT = """Your task: read the user message and output exactly one word.
 
-The word must be one of: SERIAL, QUERY, JOIN, SEMIJOIN, MAPREDUCE, DATACUBE, FULLREDUCER, APRIORITID, APRIORI, RULES, MAXIMAL, CLOSED, UNKNOWN
+The word must be one of: SERIAL, QUERY, JOIN, SEMIJOIN, MAPREDUCE, DATACUBE, FULLREDUCER, APRIORITID, APRIORI, RULES, MAXIMAL, CLOSED, PAGERANK, TFIDF, UNKNOWN
 
 Rules:
 - Output SERIAL if the message is about transaction schedules, read/write operations, serializability, precedence graphs, or conflict analysis.
@@ -56,6 +58,8 @@ Rules:
 - Output MAXIMAL if the message asks for maximal frequent itemsets (a frequent itemset with no frequent proper superset) from a transaction table.
 - Output CLOSED if the message asks for closed frequent itemsets (a frequent itemset whose every proper superset has strictly smaller support) from a transaction table.
 - Output APRIORI if the message is about data mining / frequent itemsets with the plain Apriori method: a transaction table (TID + items) and a support threshold — and it does NOT ask for Apriori-TID, tid_lists, association rules, or maximal/closed itemsets.
+- Output PAGERANK if the message is about the PageRank algorithm, ranking web pages by links, a link/web graph where pages point to other pages, building a link table from "which page links to which", in-links / out-links / out-degree, or drawing a graph of pages and arrows for PageRank.
+- Output TFIDF if the message is about TF-IDF, term frequency / inverse document frequency, a documents×words (terms) table of word counts, computing TF, IDF, or TF-IDF weights, or mentions n(d) / N(t) for a document-term table.
 - Output UNKNOWN if it is neither.
 
 Do NOT explain. Do NOT add punctuation. Output only the single word.
@@ -164,6 +168,24 @@ Answer: APRIORITID
 Message: "Solve with the AprioriTID (tid list) method, support threshold 0.5."
 Answer: APRIORITID
 
+Message: "PageRank: pages A→B, A→C, B→C, C→A. Build the link table."
+Answer: PAGERANK
+
+Message: "I want to draw a web graph of pages and links, then run PageRank."
+Answer: PAGERANK
+
+Message: "Compute the PageRank of these pages given which page links to which."
+Answer: PAGERANK
+
+Message: "Documents d1..d3, words w1..w3, here is the count table with n(d) and N(t). Compute TF-IDF."
+Answer: TFIDF
+
+Message: "Find the TF-IDF weight of each term in each document from this term-count table."
+Answer: TFIDF
+
+Message: "Compute term frequency and inverse document frequency for this documents-by-words matrix."
+Answer: TFIDF
+
 Message: "What is the weather today?"
 Answer: UNKNOWN
 
@@ -194,7 +216,7 @@ RED    = "\033[31m"
 #    instead of doing a strict equality check
 # ══════════════════════════════════════════════════════════════
 
-_VALID = {"SERIAL", "QUERY", "JOIN", "SEMIJOIN", "MAPREDUCE", "DATACUBE", "FULLREDUCER", "APRIORI", "APRIORITID", "RULES", "MAXIMAL", "CLOSED", "UNKNOWN"}
+_VALID = {"SERIAL", "QUERY", "JOIN", "SEMIJOIN", "MAPREDUCE", "DATACUBE", "FULLREDUCER", "APRIORI", "APRIORITID", "RULES", "MAXIMAL", "CLOSED", "PAGERANK", "TFIDF", "UNKNOWN"}
 
 def _extract_domain(raw: str) -> str:
     """
@@ -207,10 +229,14 @@ def _extract_domain(raw: str) -> str:
     Falls back to UNKNOWN if nothing found.
     """
     upper = raw.upper()
+    compact = upper.replace("-", "").replace("_", "").replace(" ", "")
     # APRIORI-TID may arrive hyphenated/spaced ("APRIORI-TID", "APRIORI TID");
     # check the compacted form first so it wins over the bare "APRIORI" token.
-    if "APRIORITID" in upper.replace("-", "").replace("_", "").replace(" ", ""):
+    if "APRIORITID" in compact:
         return "APRIORITID"
+    # TF-IDF / TF IDF compact to "TFIDF" (re.findall would split it into TF + IDF).
+    if "TFIDF" in compact:
+        return "TFIDF"
     # Try to find any of the valid keywords in the response
     for word in re.findall(r"[A-Z]+", upper):
         if word in _VALID:
@@ -260,6 +286,8 @@ class Orchestrator:
         self.assoc_rules_agent   = build_assoc_rules_agent(llm=self.llm)
         self.maximal_agent       = build_maximal_agent(llm=self.llm)
         self.closed_agent        = build_closed_agent(llm=self.llm)
+        self.pagerank_agent      = build_pagerank_agent(llm=self.llm)
+        self.tfidf_agent         = build_tfidf_agent(llm=self.llm)
 
         self.serial_history:   list = []
         self.query_history:    list = []
@@ -417,6 +445,14 @@ class Orchestrator:
             )
             return last_ai.content if last_ai else "(no response)"
 
+        elif domain == "PAGERANK":
+            result = self.pagerank_agent.invoke({"messages": [HumanMessage(content=user_input)]})
+            return _solution_from(result["messages"])
+
+        elif domain == "TFIDF":
+            result = self.tfidf_agent.invoke({"messages": [HumanMessage(content=user_input)]})
+            return _solution_from(result["messages"])
+
         elif domain == "MAXIMAL":
             result = self.maximal_agent.invoke({"messages": [HumanMessage(content=user_input)]})
             return _solution_from(result["messages"])
@@ -455,5 +491,7 @@ class Orchestrator:
                 "  • Data mining — association rules (confidence ≥ C from a transaction table)\n"
                 "  • Data mining — maximal frequent itemsets (no frequent proper superset)\n"
                 "  • Data mining — closed frequent itemsets (every superset has smaller support)\n"
+                "  • PageRank — build the link-structure table from a page link graph (draw it or list links)\n"
+                "  • TF-IDF — compute TF, IDF and TF-IDF from a documents×words count table (with n(d) and N(t))\n"
                 "Please clarify your question."
             )

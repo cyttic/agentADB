@@ -276,6 +276,21 @@
     "task": "Given the following table of item purchases:\n\ntid | Items\n1   | A, B, C, D, E\n2   | A, B, E\n3   | A, B, C\n4   | A, B, C, E, D\n5   | B\n\nSupport threshold: S = 0.6, Confidence threshold: C = 0.5\n\nFind all closed frequent itemsets.",
     "answer": "",
     "difficulty": "medium"
+  },
+  {
+    "id": 43,
+    "notion": "PageRang, lesson",
+    "task": "build a raiting by using PageRang algorithm on the 4 iterations, d = 0.15",
+    "answer": "",
+    "difficulty": "medium"
+  },
+  {
+    "id": 44,
+    "notion": "TF-IDF",
+    "task": "Calculate a TF-IDF  score for the following table: doc1|English:27,Nabokov:3,2025:0|nd:220;doc2|English:4,Nabokov:33,2025:33|nd:350;doc3|English:24,Nabokov:0,2025:29|nd:350;N(f)|English:15,Nabokov:5,2025:12doc1|English:27,Nabokov:3,2025:0|nd:220;doc2|English:4,Nabokov:33,2025:33|nd:350;doc3|English:24,Nabokov:0,2025:29|nd:350;N(f)|English:15,Nabokov:5,2025:12",
+    "answer": "",
+    "difficulty": "medium"
   }
+
   ]
 }

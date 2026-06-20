@@ -1,0 +1,564 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>PageRank Link-Graph Editor</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: #0d1117;
+  color: #e6edf3;
+  font: 13px/1.5 'Segoe UI', system-ui, sans-serif;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  user-select: none;
+}
+
+/* ── Header ── */
+#header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 7px 14px;
+  background: #161b22;
+  border-bottom: 1px solid #30363d;
+  flex-shrink: 0;
+}
+#header h1 { font-size: 13px; font-weight: 600; color: #58a6ff; }
+#toolbar { display: flex; gap: 4px; align-items: center; }
+.tbtn {
+  background: #21262d; color: #c9d1d9;
+  border: 1px solid #30363d;
+  padding: 4px 11px; border-radius: 6px;
+  font-size: 12px; cursor: pointer; transition: background 0.1s;
+}
+.tbtn:hover  { background: #30363d; }
+.tbtn.active { background: #1f6feb; border-color: #388bfd; color: #fff; }
+.tbtn.danger { color: #f85149; }
+.tbtn.danger:hover { background: #2d1616; border-color: #f85149; }
+.tsep { width: 1px; height: 18px; background: #30363d; margin: 0 4px; }
+
+/* ── Workspace ── */
+#workspace { flex: 1; display: flex; overflow: hidden; }
+
+/* ── Canvas ── */
+#canvas {
+  flex: 1; display: block;
+  background: #161b22;
+  background-image: radial-gradient(circle, #2a2f3a 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+/* ── Page popup (single field) ── */
+#ep-popup {
+  display: none;
+  position: fixed;
+  z-index: 100;
+  background: #1c2128;
+  border: 1px solid #58a6ff;
+  border-radius: 8px;
+  padding: 10px 12px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.7);
+  flex-direction: column;
+  gap: 7px;
+  min-width: 190px;
+}
+#ep-popup .ep-row { display: flex; flex-direction: column; gap: 2px; }
+#ep-popup label { font-size: 11px; color: #8b949e; }
+#ep-popup input {
+  background: #0d1117; color: #e6edf3;
+  border: 1px solid #30363d; border-radius: 5px;
+  padding: 5px 8px; font-size: 13px; width: 100%;
+}
+#ep-popup input:focus { outline: none; border-color: #58a6ff; }
+#ep-popup .ep-hint { font-size: 10px; color: #484f58; }
+#ep-popup .ep-btns { display: flex; gap: 6px; margin-top: 2px; }
+#ep-popup button {
+  flex: 1; padding: 4px 8px; border-radius: 5px; font-size: 12px; cursor: pointer;
+}
+#ep-ok  { background: #1f6feb; border: 1px solid #388bfd; color: #fff; }
+#ep-ok:hover { background: #388bfd; }
+#ep-cancel { background: #21262d; border: 1px solid #30363d; color: #8b949e; }
+#ep-cancel:hover { background: #30363d; }
+
+/* ── Inspector ── */
+#inspector {
+  width: 210px; flex-shrink: 0;
+  background: #0d1117; border-left: 1px solid #30363d;
+  overflow-y: auto; padding: 14px 12px;
+}
+.insp-title {
+  font-size: 10px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.1em; color: #8b949e; margin-bottom: 8px;
+}
+.field { display: flex; flex-direction: column; gap: 2px; margin-bottom: 8px; }
+.field label { font-size: 11px; color: #8b949e; }
+.field input {
+  background: #21262d; color: #e6edf3;
+  border: 1px solid #30363d; border-radius: 5px;
+  padding: 4px 8px; font-size: 12px; font-family: inherit; width: 100%;
+}
+.field input:focus { outline: none; border-color: #58a6ff; }
+.field input[type="color"]  { padding: 2px 3px; height: 28px; cursor: pointer; }
+.field input[type="number"] { -moz-appearance: textfield; }
+.field input[type="number"]::-webkit-inner-spin-button { display: none; }
+.insp-section { display: none; }
+.insp-section.vis { display: block; }
+.insp-info { font-size: 12px; color: #8b949e; line-height: 1.8; }
+#insp-hint {
+  color: #484f58; font-size: 12px; text-align: center;
+  margin-top: 30px; line-height: 1.9;
+}
+#insp-hint kbd {
+  background: #21262d; border: 1px solid #444c56;
+  border-radius: 3px; padding: 1px 5px;
+  font-size: 10px; font-family: monospace;
+}
+
+/* ── Footer ── */
+#footer {
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 14px;
+  background: #161b22; border-top: 1px solid #30363d; flex-shrink: 0;
+}
+#status { flex: 1; font-size: 12px; color: #8b949e; }
+#btn-submit {
+  background: #238636; color: #fff;
+  border: 1px solid #2ea043;
+  padding: 5px 18px; border-radius: 6px;
+  font-size: 12px; font-weight: 600; cursor: pointer;
+}
+#btn-submit:hover { background: #2ea043; }
+#btn-submit:disabled { background: #21262d; border-color: #30363d; color: #8b949e; cursor: not-allowed; }
+</style>
+</head>
+<body>
+
+<div id="header">
+  <h1>PageRank Link-Graph Editor</h1>
+  <div id="toolbar">
+    <button class="tbtn active" data-tool="select" title="Select / Move  (V)">↖ Select</button>
+    <button class="tbtn"        data-tool="page"   title="Add Page  (P)">○ Page</button>
+    <button class="tbtn"        data-tool="connect" title="Link: from → to  (L)">→ Link</button>
+    <div class="tsep"></div>
+    <button class="tbtn danger" id="btn-del"   title="Delete selected  (Del)">✕ Delete</button>
+    <button class="tbtn"        id="btn-clear" title="Clear canvas">Clear</button>
+  </div>
+</div>
+
+<!-- Page creation popup: name only -->
+<div id="ep-popup">
+  <div class="ep-row"><label>Page name</label><input id="ep-name" type="text" placeholder="A" autocomplete="off"></div>
+  <div class="ep-hint">Enter or OK to place · Esc to cancel</div>
+  <div class="ep-btns">
+    <button id="ep-ok">OK</button>
+    <button id="ep-cancel">Cancel</button>
+  </div>
+</div>
+
+<div id="workspace">
+  <svg id="canvas" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <marker id="ah"  viewBox="0 0 10 7" markerWidth="8" markerHeight="6"
+              refX="9" refY="3.5" orient="auto" markerUnits="strokeWidth">
+        <polygon points="0 0,10 3.5,0 7" fill="#94a3b8"/>
+      </marker>
+      <marker id="ahs" viewBox="0 0 10 7" markerWidth="8" markerHeight="6"
+              refX="9" refY="3.5" orient="auto" markerUnits="strokeWidth">
+        <polygon points="0 0,10 3.5,0 7" fill="#a78bfa"/>
+      </marker>
+    </defs>
+    <g id="g-edges"></g>
+    <g id="g-nodes"></g>
+    <line id="temp-line" display="none"
+          stroke="#58a6ff" stroke-width="1.5" stroke-dasharray="5 3"
+          pointer-events="none"/>
+  </svg>
+
+  <div id="inspector">
+    <div id="insp-hint">
+      Select an element<br>to edit properties.<br><br>
+      <kbd>V</kbd> Select &nbsp;&nbsp; <kbd>P</kbd> Page<br>
+      <kbd>L</kbd> Link &nbsp;&nbsp; <kbd>Del</kbd> Delete<br>
+      <kbd>Esc</kbd> Cancel
+    </div>
+
+    <div id="insp-node" class="insp-section">
+      <div class="insp-title">Page</div>
+      <div class="field"><label>Name</label>      <input id="ie-name"  type="text"></div>
+      <div class="field"><label>Radius</label>    <input id="ie-r"     type="number" min="28"></div>
+      <div class="field"><label>Color</label>     <input id="ie-color" type="color"></div>
+    </div>
+
+    <div id="insp-edge" class="insp-section">
+      <div class="insp-title">Link</div>
+      <div id="ie-edge-info" class="insp-info"></div>
+    </div>
+  </div>
+</div>
+
+<div id="footer">
+  <span id="status">Ready</span>
+  <button id="btn-submit">Submit Graph ↗</button>
+</div>
+
+<script>
+'use strict';
+
+// ══════════════════════════════════════════════════════════════
+//  State
+// ══════════════════════════════════════════════════════════════
+
+let nodes = []; // {id, x, y, rx, ry, name, color}
+let edges = []; // {id, src, tgt}  — directed: src links to tgt
+let sel   = null;   // null | {kind:'node'|'edge', id}
+let tool  = 'select';
+let drag  = null;   // {id, ox, oy}
+let conn  = null;   // {srcId}  — first click of connect
+let pending = null; // {x, y}   — canvas pos awaiting popup confirmation
+
+const PALETTE = ['#3b82f6','#f97316','#22c55e','#a855f7','#ec4899','#14b8a6','#f59e0b'];
+let colorSeq = 0, idSeq = 0;
+const uid = () => 'x' + (++idSeq);
+
+// ══════════════════════════════════════════════════════════════
+//  DOM refs
+// ══════════════════════════════════════════════════════════════
+
+const canvas    = document.getElementById('canvas');
+const gEdges    = document.getElementById('g-edges');
+const gNodes    = document.getElementById('g-nodes');
+const tempLine  = document.getElementById('temp-line');
+const statusEl  = document.getElementById('status');
+const inspHint  = document.getElementById('insp-hint');
+const inspNode  = document.getElementById('insp-node');
+const inspEdge  = document.getElementById('insp-edge');
+const popup     = document.getElementById('ep-popup');
+const epName    = document.getElementById('ep-name');
+
+// ══════════════════════════════════════════════════════════════
+//  SVG / geometry helpers
+// ══════════════════════════════════════════════════════════════
+
+const NS = 'http://www.w3.org/2000/svg';
+function el(tag, attrs, parent) {
+  const e = document.createElementNS(NS, tag);
+  if (attrs) for (const [k,v] of Object.entries(attrs)) e.setAttribute(k, String(v));
+  if (parent) parent.appendChild(e);
+  return e;
+}
+function svgPt(ev) {
+  const r = canvas.getBoundingClientRect();
+  return { x: ev.clientX - r.left, y: ev.clientY - r.top };
+}
+function hex2rgba(hex, a) {
+  const r=parseInt(hex.slice(1,3),16), g=parseInt(hex.slice(3,5),16), b=parseInt(hex.slice(5,7),16);
+  return `rgba(${r},${g},${b},${a})`;
+}
+function borderPt(cx, cy, rx, ry, tx, ty) {
+  const dx = tx-cx, dy = ty-cy;
+  if (!dx && !dy) return {x: cx+rx, y: cy};
+  const t = 1/Math.sqrt((dx/rx)**2+(dy/ry)**2);
+  return {x: cx+t*dx, y: cy+t*dy};
+}
+function nameOf(id) {
+  return (nodes.find(e => e.id===id)||{}).name || id;
+}
+
+// ══════════════════════════════════════════════════════════════
+//  CRUD
+// ══════════════════════════════════════════════════════════════
+
+function addNode(x, y, name) {
+  const color = PALETTE[colorSeq++ % PALETTE.length];
+  const e = { id: uid(), x, y, rx: 45, ry: 45, name: name||'?', color };
+  nodes.push(e);
+  render(); setsel('node', e.id);
+  status(`Page "${e.name}" placed.`);
+}
+
+function addEdge(srcId, tgtId) {
+  if (srcId===tgtId) return;
+  if (edges.some(e => e.src===srcId && e.tgt===tgtId)) return; // no duplicates
+  const e = { id: uid(), src: srcId, tgt: tgtId };
+  edges.push(e);
+  render(); setsel('edge', e.id);
+  status(`Link ${nameOf(srcId)} → ${nameOf(tgtId)}.`);
+}
+
+function deleteSelected() {
+  if (!sel) return;
+  if (sel.kind==='node') {
+    edges = edges.filter(e => e.src!==sel.id && e.tgt!==sel.id);
+    nodes = nodes.filter(e => e.id!==sel.id);
+  } else {
+    edges = edges.filter(e => e.id!==sel.id);
+  }
+  setsel(null,null); render();
+}
+
+// ══════════════════════════════════════════════════════════════
+//  Selection & inspector
+// ══════════════════════════════════════════════════════════════
+
+function setsel(kind, id) {
+  sel = kind ? {kind,id} : null;
+  syncInsp(); render();
+}
+
+function syncInsp() {
+  inspHint.style.display='none';
+  inspNode.classList.remove('vis');
+  inspEdge.classList.remove('vis');
+  if (!sel) { inspHint.style.display='block'; return; }
+  if (sel.kind==='node') {
+    const e = nodes.find(e=>e.id===sel.id); if(!e) return;
+    inspNode.classList.add('vis');
+    document.getElementById('ie-name').value  = e.name;
+    document.getElementById('ie-r').value     = e.rx;
+    document.getElementById('ie-color').value = e.color;
+  } else {
+    const ed = edges.find(e=>e.id===sel.id); if(!ed) return;
+    inspEdge.classList.add('vis');
+    document.getElementById('ie-edge-info').textContent =
+      `${nameOf(ed.src)}  →  ${nameOf(ed.tgt)}\n(${nameOf(ed.src)} links to ${nameOf(ed.tgt)})`;
+  }
+}
+
+// Inspector → state
+(function bindInputs(){
+  function on(id, fn) {
+    document.getElementById(id).addEventListener('input', () => {
+      if (sel?.kind!=='node') return;
+      const e = nodes.find(e=>e.id===sel.id); if(!e) return;
+      fn(e, document.getElementById(id).value); render();
+    });
+  }
+  on('ie-name',  (e,v)=>{ e.name=v; });
+  on('ie-r',     (e,v)=>{ const r=Math.max(28,+v||45); e.rx=r; e.ry=r; });
+  on('ie-color', (e,v)=>{ e.color=v; });
+})();
+
+// ══════════════════════════════════════════════════════════════
+//  Render
+// ══════════════════════════════════════════════════════════════
+
+function render() {
+  gEdges.innerHTML=''; gNodes.innerHTML='';
+  edges.forEach(renderEdge);
+  nodes.forEach(renderNode);
+}
+
+function renderNode(e) {
+  const isSel = sel?.kind==='node' && sel.id===e.id;
+  const g = el('g',{},gNodes);
+
+  if (isSel)
+    el('ellipse',{cx:e.x,cy:e.y,rx:e.rx+7,ry:e.ry+7,
+      fill:'none',stroke:'#58a6ff','stroke-width':1.5,'stroke-dasharray':'5 3'},g);
+
+  el('ellipse',{cx:e.x,cy:e.y,rx:e.rx,ry:e.ry,
+    fill:hex2rgba(e.color,0.28),stroke:e.color,'stroke-width':2.5},g);
+
+  const nameT = el('text',{x:e.x,y:e.y,
+    'text-anchor':'middle','dominant-baseline':'middle',
+    fill:'#f0f6fc','font-size':16,'font-weight':700,
+    'font-family':'Segoe UI,system-ui,sans-serif','pointer-events':'none'},g);
+  nameT.textContent = e.name || '?';
+
+  addHandle(g, e);
+
+  g.style.cursor = tool==='connect' ? 'crosshair' : 'grab';
+  g.addEventListener('mousedown', ev=>{ ev.stopPropagation(); onNodeDown(ev,e.id); });
+}
+
+function addHandle(parent, e) {
+  const hx = e.x+e.rx, hy = e.y;
+  const h = el('rect',{x:hx-5,y:hy-5,width:10,height:10,rx:2,
+    fill:'#21262d',stroke:'#58a6ff','stroke-width':1.5,
+    style:'cursor:ew-resize'},parent);
+  h.addEventListener('mousedown', ev=>{
+    ev.stopPropagation();
+    const start = ev.clientX, sv = e.rx;
+    const mv = m=>{ const d=m.clientX-start; const r=Math.max(28,sv+d); e.rx=r; e.ry=r; render(); };
+    const up = ()=>{ window.removeEventListener('mousemove',mv); window.removeEventListener('mouseup',up); };
+    window.addEventListener('mousemove',mv); window.addEventListener('mouseup',up);
+  });
+}
+
+function renderEdge(ed) {
+  const src = nodes.find(e=>e.id===ed.src);
+  const tgt = nodes.find(e=>e.id===ed.tgt);
+  if (!src||!tgt) return;
+
+  const isSel  = sel?.kind==='edge' && sel.id===ed.id;
+  const color  = isSel ? '#a78bfa' : '#94a3b8';
+  const marker = isSel ? 'url(#ahs)' : 'url(#ah)';
+
+  const s = borderPt(src.x,src.y,src.rx,src.ry,tgt.x,tgt.y);
+  const t = borderPt(tgt.x,tgt.y,tgt.rx,tgt.ry,src.x,src.y);
+
+  el('line',{x1:s.x,y1:s.y,x2:t.x,y2:t.y,
+    stroke:color,'stroke-width':isSel?2.5:2,'marker-end':marker},gEdges);
+
+  const hit = el('line',{x1:s.x,y1:s.y,x2:t.x,y2:t.y,
+    stroke:'transparent','stroke-width':14,style:'cursor:pointer'},gEdges);
+  hit.addEventListener('mousedown',ev=>{ ev.stopPropagation(); setsel('edge',ed.id); });
+}
+
+// ══════════════════════════════════════════════════════════════
+//  Page popup
+// ══════════════════════════════════════════════════════════════
+
+function showPopup(canvasX, canvasY) {
+  const r = canvas.getBoundingClientRect();
+  popup.style.display = 'flex';
+  popup.style.left    = `${r.left + canvasX + 14}px`;
+  popup.style.top     = `${r.top  + canvasY - 10}px`;
+  epName.value = '';
+  epName.focus();
+}
+
+function hidePopup() {
+  popup.style.display = 'none';
+  pending = null;
+}
+
+function confirmPopup() {
+  const name = epName.value.trim();
+  if (pending && name) addNode(pending.x, pending.y, name);
+  hidePopup();
+}
+
+epName.addEventListener('keydown', ev=>{
+  if (ev.key==='Enter') confirmPopup();
+  else if (ev.key==='Escape') { hidePopup(); status('Cancelled.'); }
+});
+document.getElementById('ep-ok').addEventListener('click', confirmPopup);
+document.getElementById('ep-cancel').addEventListener('click', ()=>{ hidePopup(); status('Cancelled.'); });
+
+document.addEventListener('mousedown', ev=>{
+  if (pending && !popup.contains(ev.target)) hidePopup();
+}, true);
+
+// ══════════════════════════════════════════════════════════════
+//  Mouse handlers
+// ══════════════════════════════════════════════════════════════
+
+function onNodeDown(ev, id) {
+  if (tool==='select') {
+    setsel('node',id);
+    const p=svgPt(ev), e=nodes.find(e=>e.id===id);
+    drag={id,ox:p.x-e.x,oy:p.y-e.y};
+  } else if (tool==='page') {
+    setTool('select'); setsel('node',id);
+  } else if (tool==='connect') {
+    if (!conn) {
+      conn={srcId:id};
+      tempLine.removeAttribute('display');
+      status(`From: "${nameOf(id)}" — now click the page it links to.`);
+    } else if (conn.srcId!==id) {
+      addEdge(conn.srcId, id);
+      conn=null; tempLine.setAttribute('display','none');
+    }
+  }
+}
+
+canvas.addEventListener('mousedown', ev=>{
+  if (ev.target!==canvas) return;
+  const p = svgPt(ev);
+  if (tool==='page') {
+    pending = p; showPopup(p.x, p.y);
+  } else if (tool==='connect') {
+    conn=null; tempLine.setAttribute('display','none');
+    status('Cancelled. Click a page to start a link.');
+  } else {
+    setsel(null,null);
+  }
+});
+
+window.addEventListener('mousemove', ev=>{
+  if (drag) {
+    const p=svgPt(ev), e=nodes.find(e=>e.id===drag.id);
+    if(e){ e.x=p.x-drag.ox; e.y=p.y-drag.oy; render(); }
+  }
+  if (conn) {
+    const p=svgPt(ev), src=nodes.find(e=>e.id===conn.srcId);
+    if(src){
+      const s=borderPt(src.x,src.y,src.rx,src.ry,p.x,p.y);
+      tempLine.setAttribute('x1',s.x); tempLine.setAttribute('y1',s.y);
+      tempLine.setAttribute('x2',p.x); tempLine.setAttribute('y2',p.y);
+    }
+  }
+});
+window.addEventListener('mouseup',()=>{ drag=null; });
+
+window.addEventListener('keydown', ev=>{
+  if (ev.target.tagName==='INPUT') return;
+  const k=ev.key;
+  if      (k==='v'||k==='V') setTool('select');
+  else if (k==='p'||k==='P') setTool('page');
+  else if (k==='l'||k==='L') setTool('connect');
+  else if (k==='Delete'||k==='Backspace'){ ev.preventDefault(); deleteSelected(); }
+  else if (k==='Escape'){ hidePopup(); conn=null; tempLine.setAttribute('display','none'); setsel(null,null); status('Ready.'); }
+});
+
+// ══════════════════════════════════════════════════════════════
+//  Tool switching
+// ══════════════════════════════════════════════════════════════
+
+function setTool(t) {
+  tool=t; conn=null; tempLine.setAttribute('display','none'); hidePopup();
+  document.querySelectorAll('.tbtn[data-tool]').forEach(b=>
+    b.classList.toggle('active', b.dataset.tool===t));
+  canvas.style.cursor = t==='page'?'crosshair': t==='connect'?'cell':'default';
+  status(
+    t==='page'    ? 'Click canvas to place a page. A name prompt will appear.' :
+    t==='connect' ? 'Click the page that HAS the link, then the page it points TO.' :
+                    'Click to select. Drag to move. Drag ◾ handle to resize.'
+  );
+}
+
+document.querySelectorAll('.tbtn[data-tool]').forEach(b=>
+  b.addEventListener('click',()=>setTool(b.dataset.tool)));
+document.getElementById('btn-del').addEventListener('click', deleteSelected);
+document.getElementById('btn-clear').addEventListener('click', ()=>{
+  if((nodes.length||edges.length)&&!confirm('Clear everything?')) return;
+  nodes=[]; edges=[]; setsel(null,null); render(); status('Canvas cleared.');
+});
+
+// ══════════════════════════════════════════════════════════════
+//  Submit
+// ══════════════════════════════════════════════════════════════
+
+document.getElementById('btn-submit').addEventListener('click', ()=>{
+  if (!nodes.length){ status('Add at least one page first.'); return; }
+  const graph = {
+    nodes: nodes.map(e=>({
+      id:e.id, x:Math.round(e.x), y:Math.round(e.y), rx:e.rx, ry:e.ry,
+      name:e.name, color:e.color,
+    })),
+    edges: edges.map(e=>({ id:e.id, src:e.src, tgt:e.tgt })),
+  };
+  document.getElementById('btn-submit').disabled=true;
+  status('Submitting…');
+  fetch('/submit',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(graph),
+  })
+  .then(r=>{ if(!r.ok) throw new Error(r.status); return r.text(); })
+  .then(()=>{ status('Graph submitted. You can close this window.'); })
+  .catch(()=>{ status('Submit failed.'); document.getElementById('btn-submit').disabled=false; });
+});
+
+// ── init ──
+function status(m){ statusEl.textContent=m; }
+render();
+status('Ready — P: add page · L: link from→to · V: select · Del: delete');
+</script>
+</body>
+</html>
