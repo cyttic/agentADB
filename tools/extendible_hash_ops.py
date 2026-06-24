@@ -169,14 +169,20 @@ def build_extendible_hash(spec_json: str) -> str:
 
     MAX_SPLITS = width + 2   # guard against non-terminating splits (duplicate hashes)
 
-    for step, k in enumerate(numbers, 1):
+    out.append('Each key that fits is just placed; a NEW STEP (with a diagram) is')
+    out.append('drawn only when a key does NOT fit and the index has to be rearranged')
+    out.append('(directory doubling and/or a bucket split).')
+    out.append('')
+
+    step = 0   # counts rearrangements, NOT insertions
+    for k in numbers:
         h = fn(k)
         bits = _bits(h, width)
         pfx = _prefix_str(h, width, gd)
-        out.append(f'==================== Step {step}: insert {k} ====================')
-        out.append(f'h({k}) = {k} mod {mod} = {h} => {bits}'
+        out.append(f'Insert {k}: h({k}) = {k} mod {mod} = {h} => {bits}'
                    + (f'   (prefix "{pfx}")' if pfx else '   (global depth d=0, no prefix yet)'))
 
+        rearranged = False
         splits = 0
         while True:
             slot = h >> (width - gd) if gd > 0 else 0
@@ -190,10 +196,11 @@ def build_extendible_hash(spec_json: str) -> str:
                            f'{_bucket_name(bucket.id)} = {{{", ".join(str(x) for x in bucket.items)}}}')
                 break
 
-            # bucket full -> report, then split
+            # bucket full -> this insertion forces a rearrangement
             out.append(f'  -> slot "{slot_lbl}" -> bucket {_bucket_name(bucket.id)} = '
                        f'{{{", ".join(str(x) for x in bucket.items)}}}: '
-                       f'FULL (capacity {capacity}), no room for {k}.')
+                       f'FULL (capacity {capacity}), no room for {k} -> REARRANGE.')
+            rearranged = True
 
             splits += 1
             if bucket.local_depth >= width or splits > MAX_SPLITS:
@@ -236,9 +243,13 @@ def build_extendible_hash(spec_json: str) -> str:
             out.append(f'     retry insert {k} ...')
             # loop back to re-route k with the new structure
 
-        out.append('')
-        out.append(_mermaid(directory, buckets, gd, width))
-        out.append('')
+        # a diagram is drawn ONLY when this key forced a rearrangement
+        if rearranged:
+            step += 1
+            out.append('')
+            out.append(f'==================== Step {step}: index after rearranging to place {k} ====================')
+            out.append(_mermaid(directory, buckets, gd, width))
+            out.append('')
 
     # ── final summary ──
     out.append('==================== Final index ====================')
