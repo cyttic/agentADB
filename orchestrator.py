@@ -29,6 +29,7 @@ from agents.maximal_itemsets_agent  import build_agent as build_maximal_agent
 from agents.closed_itemsets_agent   import build_agent as build_closed_agent
 from agents.pagerank_agent         import build_agent as build_pagerank_agent
 from agents.tfidf_agent            import build_agent as build_tfidf_agent
+from agents.extendible_hash_agent  import build_agent as build_exthash_agent
 from agents.ra_proposal_agent     import generate_ra_proposals
 from llm_factory                  import build_llm, LLMConfig
 
@@ -43,7 +44,7 @@ from llm_factory                  import build_llm, LLMConfig
 
 ROUTER_PROMPT = """Your task: read the user message and output exactly one word.
 
-The word must be one of: SERIAL, QUERY, JOIN, SEMIJOIN, MAPREDUCE, DATACUBE, FULLREDUCER, APRIORITID, APRIORI, RULES, MAXIMAL, CLOSED, PAGERANK, TFIDF, UNKNOWN
+The word must be one of: SERIAL, QUERY, JOIN, SEMIJOIN, MAPREDUCE, DATACUBE, FULLREDUCER, APRIORITID, APRIORI, RULES, MAXIMAL, CLOSED, PAGERANK, TFIDF, EXTHASH, UNKNOWN
 
 Rules:
 - Output SERIAL if the message is about transaction schedules, read/write operations, serializability, precedence graphs, or conflict analysis.
@@ -60,6 +61,7 @@ Rules:
 - Output APRIORI if the message is about data mining / frequent itemsets with the plain Apriori method: a transaction table (TID + items) and a support threshold — and it does NOT ask for Apriori-TID, tid_lists, association rules, or maximal/closed itemsets.
 - Output PAGERANK if the message is about the PageRank algorithm, ranking web pages by links, a link/web graph where pages point to other pages, building a link table from "which page links to which", in-links / out-links / out-degree, or drawing a graph of pages and arrows for PageRank.
 - Output TFIDF if the message is about TF-IDF, term frequency / inverse document frequency, a documents×words (terms) table of word counts, computing TF, IDF, or TF-IDF weights, or mentions n(d) / N(t) for a document-term table.
+- Output EXTHASH if the message is about extendible hashing, an extensible hash index, a hash directory with global/local depth, bucket capacity with bucket splitting / directory doubling, or routing keys by the bits of h(k) = k mod M into buckets.
 - Output UNKNOWN if it is neither.
 
 Do NOT explain. Do NOT add punctuation. Output only the single word.
@@ -186,6 +188,15 @@ Answer: TFIDF
 Message: "Compute term frequency and inverse document frequency for this documents-by-words matrix."
 Answer: TFIDF
 
+Message: "Extendible hashing, bucket capacity 2, h(k) = k mod 16, insert 72, 14, 54, 63. Show the directory and buckets."
+Answer: EXTHASH
+
+Message: "Build an extensible hash index: global/local depth, split buckets when full and double the directory."
+Answer: EXTHASH
+
+Message: "Insert these keys into an extendible hash table, capacity 3, route by the leftmost bits of h(k)."
+Answer: EXTHASH
+
 Message: "What is the weather today?"
 Answer: UNKNOWN
 
@@ -216,7 +227,7 @@ RED    = "\033[31m"
 #    instead of doing a strict equality check
 # ══════════════════════════════════════════════════════════════
 
-_VALID = {"SERIAL", "QUERY", "JOIN", "SEMIJOIN", "MAPREDUCE", "DATACUBE", "FULLREDUCER", "APRIORI", "APRIORITID", "RULES", "MAXIMAL", "CLOSED", "PAGERANK", "TFIDF", "UNKNOWN"}
+_VALID = {"SERIAL", "QUERY", "JOIN", "SEMIJOIN", "MAPREDUCE", "DATACUBE", "FULLREDUCER", "APRIORI", "APRIORITID", "RULES", "MAXIMAL", "CLOSED", "PAGERANK", "TFIDF", "EXTHASH", "UNKNOWN"}
 
 def _extract_domain(raw: str) -> str:
     """
@@ -288,6 +299,7 @@ class Orchestrator:
         self.closed_agent        = build_closed_agent(llm=self.llm)
         self.pagerank_agent      = build_pagerank_agent(llm=self.llm)
         self.tfidf_agent         = build_tfidf_agent(llm=self.llm)
+        self.exthash_agent       = build_exthash_agent(llm=self.llm)
 
         self.serial_history:   list = []
         self.query_history:    list = []
@@ -453,6 +465,10 @@ class Orchestrator:
             result = self.tfidf_agent.invoke({"messages": [HumanMessage(content=user_input)]})
             return _solution_from(result["messages"])
 
+        elif domain == "EXTHASH":
+            result = self.exthash_agent.invoke({"messages": [HumanMessage(content=user_input)]})
+            return _solution_from(result["messages"])
+
         elif domain == "MAXIMAL":
             result = self.maximal_agent.invoke({"messages": [HumanMessage(content=user_input)]})
             return _solution_from(result["messages"])
@@ -493,5 +509,6 @@ class Orchestrator:
                 "  • Data mining — closed frequent itemsets (every superset has smaller support)\n"
                 "  • PageRank — build the link-structure table from a page link graph (draw it or list links)\n"
                 "  • TF-IDF — compute TF, IDF and TF-IDF from a documents×words count table (with n(d) and N(t))\n"
+                "  • Extendible hashing — build the directory + buckets step by step from a capacity, h(k)=k mod M, and keys (Mermaid diagrams)\n"
                 "Please clarify your question."
             )

@@ -290,7 +290,15 @@
     "task": "Calculate a TF-IDF  score for the following table: doc1|English:27,Nabokov:3,2025:0|nd:220;doc2|English:4,Nabokov:33,2025:33|nd:350;doc3|English:24,Nabokov:0,2025:29|nd:350;N(f)|English:15,Nabokov:5,2025:12doc1|English:27,Nabokov:3,2025:0|nd:220;doc2|English:4,Nabokov:33,2025:33|nd:350;doc3|English:24,Nabokov:0,2025:29|nd:350;N(f)|English:15,Nabokov:5,2025:12",
     "answer": "",
     "difficulty": "medium"
+  },
+  {
+  "id": 45,
+  "notion": "hash indexes class",
+  "task": "Suppose you have an Extendible Hashing index where each bucket has a maximum capacity of 2 records. The hash function h(k) = k mod 16 produces a 4-bit binary string for any given key. Show the state of the directory and the buckets after inserting the following sequence of keys: 72,14,54,63,8,87,42,60,80,35,91,2 Show the step-by-step changes.",
+  "answer": "",
+  "difficulty": "medium"
   }
+
 
   ]
 }
