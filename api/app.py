@@ -562,6 +562,15 @@ HTML_PAGE = """<!DOCTYPE html>
     margin: 0;
     line-height: 1.6;
   }
+  .msg.agent .bubble .mermaid-diagram {
+    background: #fff;
+    border-radius: 8px;
+    padding: 12px;
+    margin: 10px 0;
+    overflow-x: auto;
+    text-align: center;
+  }
+  .msg.agent .bubble .mermaid-diagram svg { max-width: 100%; height: auto; }
 
   .domain-tag {
     display: inline-block;
@@ -881,7 +890,20 @@ HTML_PAGE = """<!DOCTYPE html>
   </div>
 </div>
 
+<script defer src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
 <script>
+// Mermaid is loaded with `defer` so it never blocks this app script (and the
+// page still works if the CDN is unreachable). Initialise it lazily, once.
+let _mermaidReady = false;
+function ensureMermaid() {
+  if (!window.mermaid) return false;
+  if (!_mermaidReady) {
+    mermaid.initialize({ startOnLoad: false, securityLevel: 'loose', theme: 'neutral' });
+    _mermaidReady = true;
+  }
+  return true;
+}
+
 const MODELS = {
   openai:    ['gpt-5.4-mini', 'gpt-5.4-nano', 'gpt-5.4'],
   anthropic: ['claude-opus-4-5', 'claude-sonnet-4-5', 'claude-haiku-4-5'],
@@ -987,14 +1009,54 @@ function appendMsg(role, text, domain) {
     bubble.appendChild(tag);
   }
 
-  const content = document.createElement(role === 'agent' ? 'pre' : 'div');
-  content.textContent = text;
-  bubble.appendChild(content);
+  if (role === 'agent') {
+    renderAgentText(bubble, text);
+  } else {
+    const content = document.createElement('div');
+    content.textContent = text;
+    bubble.appendChild(content);
+  }
 
   div.appendChild(avatar);
   div.appendChild(bubble);
   msgs.appendChild(div);
   msgs.scrollTop = msgs.scrollHeight;
+}
+
+let mermaidCounter = 0;
+// Split an agent reply into plain-text segments and ```mermaid blocks,
+// rendering each mermaid block as an actual diagram (rectangles + arrows).
+// NOTE: this JS is embedded in a Python triple-quoted (non-raw) string, so it
+// must contain NO backslash escape sequences anywhere (Python turns backslash-n
+// into a real newline, etc). The regex uses the dotAll flag and .trim() so it
+// needs no backslashes at all.
+function addPre(bubble, s) {
+  s = s.trim();
+  if (!s) return;
+  const pre = document.createElement('pre');
+  pre.textContent = s;
+  bubble.appendChild(pre);
+}
+function renderAgentText(bubble, text) {
+  const re = /```mermaid(.*?)```/gs;
+  let last = 0, m;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) addPre(bubble, text.slice(last, m.index));
+    const code = m[1].trim();
+    const holder = document.createElement('div');
+    holder.className = 'mermaid-diagram';
+    bubble.appendChild(holder);
+    const id = 'mmd-' + (++mermaidCounter);
+    if (ensureMermaid()) {
+      mermaid.render(id, code)
+        .then(({ svg }) => { holder.innerHTML = svg; })
+        .catch(() => { addPre(holder, code); });   // fall back to raw code on a syntax error
+    } else {
+      addPre(holder, code);
+    }
+    last = re.lastIndex;
+  }
+  if (last < text.length) addPre(bubble, text.slice(last));
 }
 
 let thinkCounter = 0;

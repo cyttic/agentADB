@@ -64,13 +64,18 @@ class _Bucket:
 
 def _mermaid(directory, buckets, gd, width) -> str:
     """
-    Render the current structure as a Mermaid flowchart:
-      - one DIR node holding the global depth and every directory prefix,
-      - one node per bucket (label = name, local depth, contents),
-      - one edge per directory slot, labelled with its prefix, to its bucket.
+    Render the current structure as a Mermaid flowchart, in the requested layout:
+      - the DIRECTORY is one rectangle: the global depth on top, then every
+        directory prefix stacked in a column underneath;
+      - each BUCKET is a rectangle: its own prefix (its local-depth bits) on top,
+        then its keys stacked in a column underneath;
+      - one arrow per directory slot points to the bucket it references.
+
+    Labels use only digits, bit-strings and <br/> — no braces or parentheses —
+    so Mermaid always parses and draws real rectangles.
     """
     if gd == 0:
-        dir_lines = ['d = 0', '(root)']
+        dir_lines = ['d = 0', '0']
     else:
         dir_lines = [f'd = {gd}'] + [_bits(i, gd) for i in range(len(directory))]
     dir_label = '<br/>'.join(dir_lines)
@@ -82,16 +87,27 @@ def _mermaid(directory, buckets, gd, width) -> str:
     for b in directory:
         if b not in seen:
             seen.append(b)
-    for idx, bk in enumerate(buckets):
+    for bk in buckets:
         if bk not in seen:
             seen.append(bk)
+
+    # a bucket's prefix = the top local_depth bits of any slot that points to it
+    first_slot = {}
+    for i, bk in enumerate(directory):
+        if bk not in first_slot:
+            first_slot[bk] = i
 
     node_id = {}
     for bk in seen:
         nid = f'BK{bk.id}'
         node_id[bk] = nid
-        contents = '{' + ', '.join(str(x) for x in bk.items) + '}' if bk.items else '{ }'
-        lines.append(f'    {nid}["{_bucket_name(bk.id)} (ld={bk.local_depth})<br/>{contents}"]')
+        if bk.local_depth > 0 and bk in first_slot:
+            prefix = _bits(first_slot[bk] >> (gd - bk.local_depth), bk.local_depth)
+        else:
+            prefix = ''
+        body = [str(x) for x in bk.items] or ['empty']
+        head = [prefix] if prefix else []
+        lines.append(f'    {nid}["{"<br/>".join(head + body)}"]')
 
     for i, bk in enumerate(directory):
         label = _bits(i, gd) if gd > 0 else ''
