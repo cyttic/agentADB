@@ -67,8 +67,9 @@ def _mermaid(directory, buckets, gd, width) -> str:
     Render the current structure as a Mermaid flowchart, in the requested layout:
       - the DIRECTORY is one rectangle: the global depth on top, then every
         directory prefix stacked in a column underneath;
-      - each BUCKET is a rectangle: its own prefix (its local-depth bits) on top,
-        then its keys stacked in a column underneath;
+      - each BUCKET is a rectangle holding only its keys (stacked in a column);
+        its LOCAL DEPTH is shown as a decimal number OUTSIDE the rectangle, as
+        the label of the subgraph that wraps the bucket;
       - one arrow per directory slot points to the bucket it references.
 
     Labels use only digits, bit-strings and <br/> — no braces or parentheses —
@@ -91,23 +92,16 @@ def _mermaid(directory, buckets, gd, width) -> str:
         if bk not in seen:
             seen.append(bk)
 
-    # a bucket's prefix = the top local_depth bits of any slot that points to it
-    first_slot = {}
-    for i, bk in enumerate(directory):
-        if bk not in first_slot:
-            first_slot[bk] = i
-
     node_id = {}
     for bk in seen:
         nid = f'BK{bk.id}'
         node_id[bk] = nid
-        if bk.local_depth > 0 and bk in first_slot:
-            prefix = _bits(first_slot[bk] >> (gd - bk.local_depth), bk.local_depth)
-        else:
-            prefix = ''
         body = [str(x) for x in bk.items] or ['empty']
-        head = [prefix] if prefix else []
-        lines.append(f'    {nid}["{"<br/>".join(head + body)}"]')
+        # the value box holds ONLY the keys; the local depth (decimal) is the
+        # label of the wrapping subgraph, so it sits OUTSIDE the rectangle
+        lines.append(f'    subgraph sg{bk.id}["{bk.local_depth}"]')
+        lines.append(f'        {nid}["{"<br/>".join(body)}"]')
+        lines.append(f'    end')
 
     for i, bk in enumerate(directory):
         label = _bits(i, gd) if gd > 0 else ''

@@ -571,6 +571,20 @@ HTML_PAGE = """<!DOCTYPE html>
     text-align: center;
   }
   .msg.agent .bubble .mermaid-diagram svg { max-width: 100%; height: auto; }
+  .msg.agent .bubble .diagram-tab-btn {
+    display: inline-block;
+    margin: 8px 0 2px;
+    padding: 6px 12px;
+    font-size: 12px;
+    font-family: var(--mono);
+    cursor: pointer;
+    border: 1px solid var(--accent);
+    background: transparent;
+    color: var(--accent);
+    border-radius: 6px;
+    transition: background .15s, color .15s;
+  }
+  .msg.agent .bubble .diagram-tab-btn:hover { background: var(--accent); color: #fff; }
 
   .domain-tag {
     display: inline-block;
@@ -1040,9 +1054,11 @@ function addPre(bubble, s) {
 function renderAgentText(bubble, text) {
   const re = /```mermaid(.*?)```/gs;
   let last = 0, m;
+  const codes = [];
   while ((m = re.exec(text)) !== null) {
     if (m.index > last) addPre(bubble, text.slice(last, m.index));
     const code = m[1].trim();
+    codes.push(code);
     const holder = document.createElement('div');
     holder.className = 'mermaid-diagram';
     bubble.appendChild(holder);
@@ -1057,6 +1073,47 @@ function renderAgentText(bubble, text) {
     last = re.lastIndex;
   }
   if (last < text.length) addPre(bubble, text.slice(last));
+  if (codes.length) {
+    const btn = document.createElement('button');
+    btn.className = 'diagram-tab-btn';
+    btn.textContent = codes.length > 1
+      ? ('Open all ' + codes.length + ' diagrams in a new tab')
+      : 'Open diagram in a new tab';
+    btn.addEventListener('click', function () { openDiagramsTab(codes); });
+    bubble.appendChild(btn);
+  }
+}
+
+// Open every mermaid diagram of one reply in a fresh browser tab, where there
+// is room to draw all the rectangles full size. Built with string concatenation
+// and split script tags so this source stays free of backslash escapes and of a
+// literal closing-script token (both would break the embedding Python string /
+// the parent <script>).
+function openDiagramsTab(codes) {
+  const endScript = '</scr' + 'ipt>';
+  const cdn = 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js';
+  const doc =
+    '<!DOCTYPE html><html><head><meta charset="utf-8">' +
+    '<title>Diagrams</title>' +
+    '<scr' + 'ipt src="' + cdn + '">' + endScript +
+    '<style>body{background:#fff;color:#222;font-family:system-ui,Segoe UI,sans-serif;margin:0;padding:24px}' +
+    'h2{margin:0 0 8px}h3{color:#666;font-family:monospace;margin:26px 0 6px}' +
+    '.mermaid{background:#fff;border:1px solid #e3e3e3;border-radius:8px;padding:16px;margin-bottom:10px;overflow:auto}' +
+    '</style></head><body><h2>Extendible hashing — diagrams</h2><div id="root"></div>' +
+    '<scr' + 'ipt>' +
+    'var DATA=' + JSON.stringify(codes) + ';' +
+    'var root=document.getElementById("root");' +
+    'DATA.forEach(function(code,i){' +
+    'var h=document.createElement("h3");h.textContent="Step "+(i+1);root.appendChild(h);' +
+    'var d=document.createElement("div");d.className="mermaid";d.textContent=code;root.appendChild(d);});' +
+    'mermaid.initialize({startOnLoad:false,securityLevel:"loose",theme:"neutral"});' +
+    'mermaid.run();' +
+    endScript + '</body></html>';
+  const w = window.open('', '_blank');
+  if (!w) { alert('Please allow pop-ups to open the diagrams in a new tab.'); return; }
+  w.document.open();
+  w.document.write(doc);
+  w.document.close();
 }
 
 let thinkCounter = 0;
